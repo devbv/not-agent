@@ -165,7 +165,7 @@ Wrap your entire summary in <summary></summary> tags.
     # Claude API 호출 (요약용)
     response = self.client.messages.create(
         model=self.model,
-        max_tokens=2048,
+        max_tokens=4096,
         system="You are a helpful assistant that creates concise summaries.",
         messages=messages_to_summarize + [
             {"role": "user", "content": summary_prompt}

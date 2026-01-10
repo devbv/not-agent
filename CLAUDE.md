@@ -49,6 +49,8 @@ not-agent/
 - `history/` 폴더에 중요한 의사결정과 진행상황 기록
 - 중요: 각 Phase 작업 시작시 계획 문서를 history 폴더 아래에 기록
 - 중요: 각 Phase 완료 시 마일스톤 문서 작성
+- **중요: Phase 작업 완료 시 반드시 커밋할 것** (`/commit` 사용)
+- CLAUDE.md 파일과 README.md 파일 업데이트할 것
 - 코드 작성 전 설계 먼저 검토
 
 ## 명령어

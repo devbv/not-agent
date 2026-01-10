@@ -47,7 +47,15 @@ class ToolExecutor:
                 approval_desc = tool.get_approval_description(**tool_input)
 
                 if approval_desc:  # Tool이 승인 필요하다고 함
-                    approved = self.approval.request(tool.name, approval_desc)
+                    # write 도구의 경우 diff 생성
+                    diff = None
+                    if tool.name == "write" and hasattr(tool, "generate_diff"):
+                        diff = tool.generate_diff(
+                            tool_input.get("file_path", ""),
+                            tool_input.get("content", ""),
+                        )
+
+                    approved = self.approval.request(tool.name, approval_desc, diff=diff)
 
                     if not approved:
                         return ToolResult(
@@ -142,7 +150,15 @@ class ToolExecutor:
                 approval_desc = tool.get_approval_description(**tool_input)
 
                 if approval_desc:
-                    approved = self.approval.request(tool.name, approval_desc)
+                    # write 도구의 경우 diff 생성
+                    diff = None
+                    if tool.name == "write" and hasattr(tool, "generate_diff"):
+                        diff = tool.generate_diff(
+                            tool_input.get("file_path", ""),
+                            tool_input.get("content", ""),
+                        )
+
+                    approved = self.approval.request(tool.name, approval_desc, diff=diff)
 
                     if not approved:
                         return ToolResult(
