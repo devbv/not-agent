@@ -3,7 +3,6 @@
 from typing import Any
 
 from prompt_toolkit import prompt
-from prompt_toolkit.shortcuts import radiolist_dialog
 from rich.console import Console
 from rich.panel import Panel
 
@@ -72,29 +71,39 @@ class AskUserQuestionTool(BaseTool):
                         error="Too many options (max 10)",
                     )
 
-                # Show options using radiolist dialog
-                console.print("\n[dim]Please select an option:[/dim]")
+                # Show options in terminal (simpler than dialog)
+                console.print("\n[dim]Please select an option (enter number):[/dim]")
+                for i, opt in enumerate(options, 1):
+                    console.print(f"  [cyan]{i}[/cyan]. {opt}")
 
-                result = radiolist_dialog(
-                    title="Agent Question",
-                    text=question,
-                    values=[(i, opt) for i, opt in enumerate(options)],
-                ).run()
+                # Get user input
+                while True:
+                    try:
+                        choice = prompt("\n→ Enter choice (1-{max}): ".replace("{max}", str(len(options)))).strip()
 
-                if result is None:
-                    return ToolResult(
-                        success=False,
-                        output="",
-                        error="User cancelled the question",
-                    )
+                        if not choice:
+                            console.print("[yellow]Please enter a number[/yellow]")
+                            continue
 
-                selected_option = options[result]
-                console.print(f"[green]→[/green] You selected: {selected_option}\n")
+                        choice_num = int(choice)
+                        if 1 <= choice_num <= len(options):
+                            selected_option = options[choice_num - 1]
+                            console.print(f"[green]→[/green] You selected: {selected_option}\n")
 
-                return ToolResult(
-                    success=True,
-                    output=f"User selected: {selected_option}",
-                )
+                            return ToolResult(
+                                success=True,
+                                output=f"User selected: {selected_option}",
+                            )
+                        else:
+                            console.print(f"[yellow]Please enter a number between 1 and {len(options)}[/yellow]")
+                    except ValueError:
+                        console.print("[yellow]Please enter a valid number[/yellow]")
+                    except KeyboardInterrupt:
+                        return ToolResult(
+                            success=False,
+                            output="",
+                            error="User cancelled the question",
+                        )
 
             else:
                 # Free-form question
