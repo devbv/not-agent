@@ -1,5 +1,6 @@
 """Tools module - File operations, bash execution, web search, etc."""
 
+from .ask_user import AskUserQuestionTool
 from .base import BaseTool, ToolResult
 from .bash import BashTool
 from .edit import EditTool
@@ -11,6 +12,7 @@ from .web_search import WebSearchTool
 from .write import WriteTool
 
 __all__ = [
+    "AskUserQuestionTool",
     "BaseTool",
     "ToolResult",
     "BashTool",
@@ -35,4 +37,5 @@ def get_all_tools() -> list[BaseTool]:
         BashTool(),
         WebSearchTool(),
         WebFetchTool(),
+        AskUserQuestionTool(),
     ]

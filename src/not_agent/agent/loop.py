@@ -149,6 +149,9 @@ SAFETY:
                 if tool_use.name == "AskUserQuestion" and self.status_callback:
                     self.status_callback()
 
+                # Update executor with current conversation history for approval checking
+                self.executor.set_conversation_history(self.messages)
+
                 result = self.executor.execute(tool_use.name, tool_use.input)
 
                 print(f"    Success: {result.success}")
