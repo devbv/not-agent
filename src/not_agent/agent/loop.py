@@ -1,14 +1,17 @@
 """Agent loop - Main agent execution loop."""
 
 import time
-from pathlib import Path
 from typing import Any
 
 from anthropic import Anthropic, RateLimitError, APIError
 from anthropic.types import Message, ToolUseBlock, TextBlock
+from rich.console import Console
 
-from not_agent.tools import ToolResult
+from not_agent.tools import ToolResult, TodoManager, get_all_tools
 from .executor import ToolExecutor
+
+# Debug console (shared instance)
+_debug_console = Console()
 
 
 class AgentLoop:
@@ -19,11 +22,13 @@ class AgentLoop:
         model: str = "claude-haiku-4-5-20251001",
         max_turns: int = 20,
         max_output_length: int = 10_000,
-        max_context_tokens: int = 50_000,
+        max_context_tokens: int = 100_000,
         compaction_threshold: float = 0.75,
-        preserve_recent_messages: int = 4,
+        preserve_recent_messages: int = 3,
         enable_auto_compaction: bool = True,
         executor: ToolExecutor | None = None,
+        todo_manager: TodoManager | None = None,
+        debug: bool = False,
     ) -> None:
         self.client = Anthropic()
         self.model = model
@@ -33,11 +38,25 @@ class AgentLoop:
         self.compaction_threshold = compaction_threshold
         self.preserve_recent_messages = preserve_recent_messages
         self.enable_auto_compaction = enable_auto_compaction
-        self.executor = executor or ToolExecutor()
+        self.debug = debug
+
+        # TodoManager 인스턴스 생성 (세션별 격리)
+        self.todo_manager = todo_manager or TodoManager()
+
+        # Executor 설정 - TodoManager 주입
+        if executor:
+            self.executor = executor
+        else:
+            tools = get_all_tools(todo_manager=self.todo_manager)
+            self.executor = ToolExecutor(tools=tools)
+
         self.messages: list[dict[str, Any]] = []
         self.system_prompt = self._get_system_prompt()
-        # Track pending draft_write for auto-confirm
-        self.pending_draft: dict[str, str] | None = None
+
+    def _debug_log(self, message: str) -> None:
+        """Print debug message in dim style if debug mode is enabled."""
+        if self.debug:
+            _debug_console.print(f"[dim]{message}[/dim]")
 
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the agent."""
@@ -52,7 +71,7 @@ WORKFLOW: You can use multiple turns:
 
 Available tools:
 - read: Read file contents
-- draft_write: Declare intention to write a file (system will auto-save content in next turn)
+- write: Write content to a file (provide file_path and complete content)
 - edit: Edit files by replacing text
 - glob: Find files by pattern (e.g., "**/*.py")
 - grep: Search file contents with regex
@@ -60,11 +79,13 @@ Available tools:
 - WebSearch: Search the web for information
 - WebFetch: Fetch URL content and convert HTML to plain text
 - AskUserQuestion: Ask the user for clarification
+- TodoWrite: Update todo list (replaces entire list)
+- TodoRead: Read current todo list
 
 RULES:
 1. When asked to find/search something → USE the glob or grep tool immediately
 2. When asked to read/show a file → USE the read tool immediately
-3. When asked to create a file → USE draft_write + show content (system auto-saves)
+3. When asked to create/write a file → USE write tool with file_path and COMPLETE content
 4. When asked to modify a file → USE the edit tool immediately
 5. When asked to run a command → USE the bash tool immediately
 6. When asked about recent/latest information → USE WebSearch immediately
@@ -72,46 +93,60 @@ RULES:
 8. NEVER explain methods or options - just take action
 9. After using tools, summarize what you found/did
 
-CRITICAL: File Writing Content Format
-When you receive "Draft registered for: <file_path>" feedback after calling draft_write:
-- Your NEXT response must contain ONLY the file content itself
-- DO NOT include meta-commentary like "Here's the content:" or "I will write:"
-- DO NOT include explanations about what you're doing
-- Start directly with the actual content that should be saved to the file
-- The system will automatically save your entire text response to the file
+CRITICAL for write tool:
+- You MUST provide BOTH file_path AND content in a single call
+- Generate the full content first, then call write with all text included
+- Example: write(file_path="/path/to/file.txt", content="Complete content here...")
 
-Example WRONG:
-"이제 2차 창작물의 내용을 작성하겠습니다:
+TODO TOOL USAGE:
+Use TodoWrite to plan and track complex tasks (3+ steps).
 
-# Story Title
-..."
+When to use:
+- Complex tasks with 3+ steps
+- User requests multiple things at once
+- Multi-file changes
 
-Example CORRECT:
-"# Story Title
-Once upon a time..."
+When NOT to use:
+- Single, simple tasks
+- Tasks under 3 steps
+- Pure conversation/information requests
 
+Status values:
+- pending: Not yet started
+- in_progress: Currently working on (only ONE at a time!)
+- completed: Finished
+
+Mark tasks as completed IMMEDIATELY after finishing (don't batch).
 """
 
-    def run(self, user_message: str, pause_spinner_callback: Any = None, resume_spinner_callback: Any = None) -> str:
+    def run(
+        self,
+        user_message: str,
+        pause_spinner_callback: Any = None,
+        resume_spinner_callback: Any = None,
+        update_spinner_callback: Any = None,
+    ) -> str:
         """Run the agent loop with a user message.
 
         Args:
             user_message: The user's input message
             pause_spinner_callback: Optional callback to pause spinner during user input
             resume_spinner_callback: Optional callback to resume spinner after user input
+            update_spinner_callback: Optional callback to update spinner with new todo status
         """
         self.pause_spinner_callback = pause_spinner_callback
         self.resume_spinner_callback = resume_spinner_callback
+        self.update_spinner_callback = update_spinner_callback
         self.messages.append({"role": "user", "content": user_message})
 
-        print(f"\n{'='*60}")
-        print(f"[AGENT LOOP] Starting with user message: {user_message[:100]}...")
-        print(f"{'='*60}\n")
+        self._debug_log(f"\n{'='*60}")
+        self._debug_log(f"[AGENT LOOP] Starting with user message: {user_message[:100]}...")
+        self._debug_log(f"{'='*60}\n")
 
         for turn in range(self.max_turns):
-            print(f"\n{'─'*60}")
-            print(f"[TURN {turn + 1}/{self.max_turns}]")
-            print(f"{'─'*60}")
+            self._debug_log(f"\n{'─'*60}")
+            self._debug_log(f"[TURN {turn + 1}/{self.max_turns}]")
+            self._debug_log(f"{'─'*60}")
 
             # Don't force tool use - let LLM decide when it's ready
             # Forcing tools can cause incomplete parameters (e.g., write without content)
@@ -123,130 +158,34 @@ Once upon a time..."
             ]
 
             if not tool_uses:
-                # No tool calls - check if we need to auto-confirm a pending draft
+                # No tool calls - return text response
                 text_content = [
                     block.text
                     for block in response.content
                     if isinstance(block, TextBlock)
                 ]
                 text_response = "\n".join(text_content)
-
-                if self.pending_draft and text_response.strip():
-                    # Auto-confirm the pending draft write
-                    file_path = self.pending_draft["file_path"]
-                    print(f"\n[AUTO-CONFIRM] Detected draft content, auto-confirming write to {file_path}")
-                    print(f"[AUTO-CONFIRM] Content length: {len(text_response)} chars")
-
-                    # Pause spinner during approval prompt
-                    if self.pause_spinner_callback:
-                        self.pause_spinner_callback()
-
-                    # Get approval from user
-                    approved = True
-                    if self.executor.approval and self.executor.approval.enabled:
-                        lines = len(text_response.split("\n"))
-                        path = Path(file_path)
-                        exists = path.exists()
-
-                        if exists:
-                            approval_desc = f"Overwrite {file_path} ({lines} lines)"
-                        else:
-                            approval_desc = f"Write {lines} lines to {file_path} (new file)"
-
-                        approved = self.executor.approval.request("confirm_write", approval_desc)
-
-                    # Resume spinner
-                    if self.resume_spinner_callback:
-                        self.resume_spinner_callback()
-
-                    # Execute write if approved
-                    if approved:
-                        try:
-                            path = Path(file_path)
-                            path.parent.mkdir(parents=True, exist_ok=True)
-
-                            with open(path, "w", encoding="utf-8") as f:
-                                f.write(text_response)
-
-                            result_msg = f"Successfully wrote {len(text_response)} characters to {file_path}"
-                            print(f"[AUTO-CONFIRM] {result_msg}")
-
-                            # Clear pending draft
-                            self.pending_draft = None
-
-                            # Continue to next turn
-                            self.messages.append({"role": "assistant", "content": response.content})
-                            self.messages.append({
-                                "role": "user",
-                                "content": f"File successfully written. {result_msg}"
-                            })
-                            continue
-
-                        except Exception as e:
-                            error_msg = f"Error writing file: {e}"
-                            print(f"[AUTO-CONFIRM] Error: {error_msg}")
-
-                            # Clear pending draft on error
-                            self.pending_draft = None
-
-                            # Continue with error message
-                            self.messages.append({"role": "assistant", "content": response.content})
-                            self.messages.append({
-                                "role": "user",
-                                "content": f"Failed to write file. {error_msg}"
-                            })
-                            continue
-                    else:
-                        # User denied approval
-                        print(f"[AUTO-CONFIRM] User denied permission")
-
-                        # Clear pending draft
-                        self.pending_draft = None
-
-                        # Continue with denial message
-                        self.messages.append({"role": "assistant", "content": response.content})
-                        self.messages.append({
-                            "role": "user",
-                            "content": "User denied permission for this action. Please ask what they would like to do instead."
-                        })
-                        continue
-
-                # No pending draft, return text response
-                print(f"\n[COMPLETE] No tool calls, returning text response")
+                self._debug_log(f"\n[COMPLETE] No tool calls, returning text response")
                 return text_response
 
             # Process tool calls
             self.messages.append({"role": "assistant", "content": response.content})
 
-            print(f"\n[TOOL EXECUTION] Executing {len(tool_uses)} tool(s)...")
+            self._debug_log(f"\n[TOOL EXECUTION] Executing {len(tool_uses)} tool(s)...")
 
             tool_results = []
 
-            # Extract text from current response for confirm_write auto-fill
-            text_blocks = [
-                block.text for block in response.content if isinstance(block, TextBlock)
-            ]
-            current_response_text = "\n".join(text_blocks)
-
             for idx, tool_use in enumerate(tool_uses):
-                print(f"\n  Tool {idx + 1}: {tool_use.name}")
+                self._debug_log(f"\n  Tool {idx + 1}: {tool_use.name}")
 
-                # Special handling for confirm_write: auto-fill content from current response
-                tool_input = dict(tool_use.input)  # Make a copy
-
-                if tool_use.name == "confirm_write" and "content" not in tool_input:
-                    if current_response_text.strip():
-                        print(f"    [AUTO-FILL] confirm_write missing content, using current response text ({len(current_response_text)} chars)")
-                        tool_input["content"] = current_response_text
-                    else:
-                        print(f"    [ERROR] confirm_write missing content and no text in current response")
+                tool_input = dict(tool_use.input)
 
                 # Show input for debugging
                 input_str = str(tool_input)
                 if len(input_str) > 150:
-                    print(f"    Input: {input_str[:150]}...")
+                    self._debug_log(f"    Input: {input_str[:150]}...")
                 else:
-                    print(f"    Input: {input_str}")
+                    self._debug_log(f"    Input: {input_str}")
 
                 # Pause spinner for AskUserQuestion to allow clean user input
                 if tool_use.name == "AskUserQuestion" and self.pause_spinner_callback:
@@ -258,16 +197,16 @@ Once upon a time..."
                 if tool_use.name == "AskUserQuestion" and self.resume_spinner_callback:
                     self.resume_spinner_callback()
 
-                # Track draft_write for auto-confirm in next turn
-                if tool_use.name == "draft_write" and result.success:
-                    self.pending_draft = {"file_path": tool_input["file_path"]}
-                    print(f"    [PENDING] Draft registered for auto-confirm: {tool_input['file_path']}")
-
-                print(f"    Success: {result.success}")
+                self._debug_log(f"    Success: {result.success}")
                 if result.success:
-                    print(f"    Output: {result.output[:200]}...")
+                    self._debug_log(f"    Output: {result.output[:200]}...")
                 else:
-                    print(f"    Error: {result.error}")
+                    self._debug_log(f"    Error: {result.error}")
+
+                # Update spinner with new todo status (live display)
+                if tool_use.name == "TodoWrite" and result.success:
+                    if self.update_spinner_callback:
+                        self.update_spinner_callback()
 
                 tool_results.append(
                     {
@@ -278,21 +217,21 @@ Once upon a time..."
                 )
 
             self.messages.append({"role": "user", "content": tool_results})
-            print(f"\n[FEEDBACK] Tool results added to conversation")
+            self._debug_log(f"\n[FEEDBACK] Tool results added to conversation")
 
             # Check context size after each turn
             self._check_context_size()
 
-        print(f"\n{'='*60}")
-        print(f"[MAX TURNS] Reached maximum turns ({self.max_turns})")
-        print(f"{'='*60}\n")
+        self._debug_log(f"\n{'='*60}")
+        self._debug_log(f"[MAX TURNS] Reached maximum turns ({self.max_turns})")
+        self._debug_log(f"{'='*60}\n")
         return "Max turns reached. Please continue with a new message."
 
     def _call_llm(self, force_tool: bool = False) -> Message:
         """Call the LLM with current messages."""
         kwargs: dict[str, Any] = {
             "model": self.model,
-            "max_tokens": 4096,
+            "max_tokens": 16*1024,
             "system": self.system_prompt,
             "tools": self.executor.get_tool_definitions(),
             "messages": self.messages,
@@ -303,74 +242,82 @@ Once upon a time..."
             kwargs["tool_choice"] = {"type": "any"}
 
         # Show LLM request
-        print(f"\n[LLM REQUEST]")
+        self._debug_log(f"\n[LLM REQUEST]")
         for i, msg in enumerate(self.messages, 1):
             role = msg['role']
             content = msg['content']
 
             if isinstance(content, str):
                 preview = content[:150] + "..." if len(content) > 150 else content
-                print(f"  #{i} {role.upper()}: {preview}")
+                self._debug_log(f"  #{i} {role.upper()}: {preview}")
             elif isinstance(content, list):
                 # Check if it's tool results or assistant content
                 if all(isinstance(item, dict) and item.get('type') == 'tool_result' for item in content):
-                    print(f"  #{i} {role.upper()}: [Tool Results x{len(content)}]")
+                    self._debug_log(f"  #{i} {role.upper()}: [Tool Results x{len(content)}]")
                     for j, item in enumerate(content[:2], 1):  # Show first 2 tool results
                         result_preview = item['content'][:100] + "..." if len(item['content']) > 100 else item['content']
-                        print(f"      Result {j}: {result_preview}")
+                        self._debug_log(f"      Result {j}: {result_preview}")
                     if len(content) > 2:
-                        print(f"      ... and {len(content) - 2} more")
+                        self._debug_log(f"      ... and {len(content) - 2} more")
                 else:
                     # Assistant message with mixed content
                     for item in content:
                         if hasattr(item, 'type'):
                             if item.type == 'tool_use':
-                                print(f"  #{i} {role.upper()}: Tool={item.name}, Input={str(item.input)[:80]}...")
+                                self._debug_log(f"  #{i} {role.upper()}: Tool={item.name}, Input={str(item.input)[:80]}...")
                             elif item.type == 'text':
-                                print(f"  #{i} {role.upper()}: {item.text[:100]}...")
+                                self._debug_log(f"  #{i} {role.upper()}: {item.text[:100]}...")
 
         try:
             response = self.client.messages.create(**kwargs)
         except RateLimitError as e:
-            print(f"\n{'='*60}")
-            print(f"[API ERROR] Rate Limit Exceeded")
-            print(f"{'='*60}")
-            print(f"[ERROR] Claude API rate limit reached.")
-            print(f"[ERROR] {str(e)}")
-            print(f"\n[SUGGESTION] Please try one of the following:")
-            print(f"  1. Wait a few moments and try again")
-            print(f"  2. Use 'reset' to clear conversation history")
-            print(f"  3. Reduce the size of your request")
-            print(f"{'='*60}\n")
+            self._debug_log(f"\n{'='*60}")
+            self._debug_log(f"[API ERROR] Rate Limit Exceeded")
+            self._debug_log(f"{'='*60}")
+            self._debug_log(f"[ERROR] Claude API rate limit reached.")
+            self._debug_log(f"[ERROR] {str(e)}")
+            self._debug_log(f"\n[SUGGESTION] Please try one of the following:")
+            self._debug_log(f"  1. Wait a few moments and try again")
+            self._debug_log(f"  2. Use 'reset' to clear conversation history")
+            self._debug_log(f"  3. Reduce the size of your request")
+            self._debug_log(f"{'='*60}\n")
             raise
         except APIError as e:
-            print(f"\n{'='*60}")
-            print(f"[API ERROR] Claude API Error")
-            print(f"{'='*60}")
-            print(f"[ERROR] Failed to communicate with Claude API.")
-            print(f"[ERROR] {str(e)}")
-            print(f"\n[SUGGESTION] Please check:")
-            print(f"  1. Your internet connection")
-            print(f"  2. API key is valid (ANTHROPIC_API_KEY)")
-            print(f"  3. Anthropic API status: https://status.anthropic.com")
-            print(f"{'='*60}\n")
+            self._debug_log(f"\n{'='*60}")
+            self._debug_log(f"[API ERROR] Claude API Error")
+            self._debug_log(f"{'='*60}")
+            self._debug_log(f"[ERROR] Failed to communicate with Claude API.")
+            self._debug_log(f"[ERROR] {str(e)}")
+            self._debug_log(f"\n[SUGGESTION] Please check:")
+            self._debug_log(f"  1. Your internet connection")
+            self._debug_log(f"  2. API key is valid (ANTHROPIC_API_KEY)")
+            self._debug_log(f"  3. Anthropic API status: https://status.anthropic.com")
+            self._debug_log(f"{'='*60}\n")
             raise
         except Exception as e:
-            print(f"\n{'='*60}")
-            print(f"[ERROR] Unexpected Error")
-            print(f"{'='*60}")
-            print(f"[ERROR] {str(e)}")
-            print(f"{'='*60}\n")
+            self._debug_log(f"\n{'='*60}")
+            self._debug_log(f"[ERROR] Unexpected Error")
+            self._debug_log(f"{'='*60}")
+            self._debug_log(f"[ERROR] {str(e)}")
+            self._debug_log(f"{'='*60}\n")
             raise
 
         # Show LLM response
-        print(f"\n[LLM RESPONSE]")
+        self._debug_log(f"\n[LLM RESPONSE] (stop_reason: {response.stop_reason})")
         for i, block in enumerate(response.content, 1):
             if isinstance(block, ToolUseBlock):
-                print(f"  #{i} ToolUse: {block.name}")
-                print(f"      Input: {str(block.input)[:150]}...")
+                self._debug_log(f"  #{i} ToolUse: {block.name}")
+                input_str = str(block.input)
+                self._debug_log(f"      Input: {input_str[:150]}...")
+                # 특히 write 도구의 content가 비어있는지 체크
+                if block.name == "write":
+                    content = block.input.get("content", "")
+                    if not content:
+                        self._debug_log(f"      [ERROR] write tool called with EMPTY content!")
+                    else:
+                        self._debug_log(f"      Content length: {len(content)} chars")
             elif isinstance(block, TextBlock):
-                print(f"  #{i} Text: {block.text[:150]}...")
+                self._debug_log(f"  #{i} Text: {block.text[:150]}...")
 
         return response
 
@@ -435,10 +382,10 @@ Once upon a time..."
 
         # Warnings if not compacting
         if token_count > self.max_context_tokens:
-            print(f"\n[WARNING] Context size ({token_count:,} tokens) exceeds limit ({self.max_context_tokens:,} tokens)")
-            print(f"[WARNING] Consider using 'reset' command to clear history")
+            self._debug_log(f"\n[WARNING] Context size ({token_count:,} tokens) exceeds limit ({self.max_context_tokens:,} tokens)")
+            self._debug_log(f"[WARNING] Consider using 'reset' command to clear history")
         elif token_count > self.max_context_tokens * 0.8:
-            print(f"\n[INFO] Context size: {token_count:,} / {self.max_context_tokens:,} tokens (80%+)")
+            self._debug_log(f"\n[INFO] Context size: {token_count:,} / {self.max_context_tokens:,} tokens (80%+)")
 
     def get_context_usage(self) -> dict[str, any]:
         """Get current context usage information."""
@@ -537,7 +484,7 @@ Wrap your entire summary in <summary></summary> tags."""
             # Call Claude API for summarization
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=2048,
+                max_tokens=8*1024,
                 system="You are a helpful assistant that creates concise summaries.",
                 messages=cleaned_messages + [
                     {"role": "user", "content": summary_prompt}
@@ -558,7 +505,7 @@ Wrap your entire summary in <summary></summary> tags."""
                 return text.strip()
 
         except Exception as e:
-            print(f"[ERROR] Failed to generate summary: {e}")
+            self._debug_log(f"[ERROR] Failed to generate summary: {e}")
             # Fallback: simple concatenation
             return "Previous conversation covered multiple topics. Context preserved."
 
@@ -580,7 +527,7 @@ Wrap your entire summary in <summary></summary> tags."""
                 # Include one more message (the assistant message with tool_use)
                 if len(self.messages) > self.preserve_recent_messages:
                     recent_messages = self.messages[-(self.preserve_recent_messages + 1):]
-                    print(f"[INFO] Extended recent messages to preserve tool_use/tool_result pairs")
+                    self._debug_log(f"[INFO] Extended recent messages to preserve tool_use/tool_result pairs")
 
         # Create summary message
         summary_message = {
@@ -593,16 +540,16 @@ Wrap your entire summary in <summary></summary> tags."""
 
     def _compact_context(self) -> None:
         """Perform context compaction by summarizing old messages."""
-        print(f"\n{'='*60}")
-        print(f"[CONTEXT COMPACTION] Starting...")
-        print(f"{'='*60}")
+        self._debug_log(f"\n{'='*60}")
+        self._debug_log(f"[CONTEXT COMPACTION] Starting...")
+        self._debug_log(f"{'='*60}")
 
         # Pre-compaction stats
         original_count = len(self.messages)
         original_tokens = self._count_messages_tokens()
 
-        print(f"[INFO] Current state: {original_count} messages, {original_tokens:,} tokens")
-        print(f"[INFO] Preserving recent {self.preserve_recent_messages} messages")
+        self._debug_log(f"[INFO] Current state: {original_count} messages, {original_tokens:,} tokens")
+        self._debug_log(f"[INFO] Preserving recent {self.preserve_recent_messages} messages")
 
         # Find safe split point (don't break tool_use/tool_result pairs)
         preserve_count = self.preserve_recent_messages
@@ -619,17 +566,17 @@ Wrap your entire summary in <summary></summary> tags."""
                     for item in content
                 ):
                     preserve_count += 1
-                    print(f"[INFO] Extended preserve count to {preserve_count} to keep tool pairs intact")
+                    self._debug_log(f"[INFO] Extended preserve count to {preserve_count} to keep tool pairs intact")
 
         # Split messages at safe point
         messages_to_summarize = self.messages[:-preserve_count]
 
-        print(f"[INFO] Summarizing {len(messages_to_summarize)} older messages...")
+        self._debug_log(f"[INFO] Summarizing {len(messages_to_summarize)} older messages...")
 
         # Generate summary (clean messages without tool_result orphans)
         summary = self._generate_summary(messages_to_summarize)
 
-        print(f"[INFO] Summary generated ({len(summary)} characters)")
+        self._debug_log(f"[INFO] Summary generated ({len(summary)} characters)")
 
         # Replace history (using updated preserve_count)
         recent_messages = self.messages[-preserve_count:]
@@ -644,7 +591,7 @@ Wrap your entire summary in <summary></summary> tags."""
         new_tokens = self._count_messages_tokens()
         reduction = ((original_tokens - new_tokens) / original_tokens) * 100
 
-        print(f"[SUCCESS] Compaction complete!")
-        print(f"[SUCCESS] Messages: {original_count} → {new_count}")
-        print(f"[SUCCESS] Tokens: {original_tokens:,} → {new_tokens:,} ({reduction:.1f}% reduction)")
-        print(f"{'='*60}\n")
+        self._debug_log(f"[SUCCESS] Compaction complete!")
+        self._debug_log(f"[SUCCESS] Messages: {original_count} → {new_count}")
+        self._debug_log(f"[SUCCESS] Tokens: {original_tokens:,} → {new_tokens:,} ({reduction:.1f}% reduction)")
+        self._debug_log(f"{'='*60}\n")

@@ -2,12 +2,15 @@
 
 import os
 import sys
+from typing import TYPE_CHECKING
 
 import click
-from rich.console import Console
+from rich.console import Console, Group
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.progress import BarColumn, Progress, TextColumn
+from rich.spinner import Spinner
+from rich.live import Live
+from rich.text import Text
 from prompt_toolkit import prompt
 from prompt_toolkit.history import FileHistory
 
@@ -17,9 +20,132 @@ from not_agent.agent import AgentLoop
 from not_agent.agent.approval import ApprovalManager
 from not_agent.agent.executor import ToolExecutor
 from not_agent.llm.claude import ClaudeClient
+from not_agent.tools import TodoManager, get_all_tools
 
 
 console = Console()
+
+
+class TodoSpinner:
+    """Spinner that shows todo list and current task using Rich Live display."""
+
+    def __init__(self, console: Console, todo_manager: TodoManager):
+        self.console = console
+        self.todo_manager = todo_manager
+        self._live: Live | None = None
+
+    def _build_display(self) -> Group:
+        """Build the complete display with todo list and spinner."""
+        parts = []
+
+        # Todo list
+        todos = self.todo_manager.get_todos()
+        if todos:
+            status_icons = {"completed": "✅", "in_progress": "🔄", "pending": "⬜"}
+            summary = self.todo_manager.get_summary()
+
+            # Header
+            parts.append(Text(f"📋 Tasks ({summary['completed']}/{summary['total']})"))
+
+            # Todo items
+            for todo in todos:
+                status = todo.get("status", "pending")
+                icon = status_icons.get(status, "⬜")
+                content = todo.get("content", "")
+
+                if status == "completed":
+                    parts.append(Text(f"  {icon} {content}", style="strike"))
+                elif status == "in_progress":
+                    parts.append(Text(f"  {icon} {content}", style="bold"))
+                else:
+                    parts.append(Text(f"  {icon} {content}"))
+
+            # Spacing
+            parts.append(Text(""))
+
+        # Spinner line with actual Spinner object
+        current_task = self.todo_manager.get_current_task()
+
+        if current_task:
+            summary = self.todo_manager.get_summary()
+            progress = f"({summary['completed']}/{summary['total']})"
+
+            # Truncate long task names
+            max_len = 50
+            if len(current_task) > max_len:
+                current_task = current_task[:max_len-3] + "..."
+
+            spinner_text = f"[bold green]Thinking...[/bold green] [dim]|[/dim] [yellow]🔄 {current_task}[/yellow] [dim]{progress}[/dim]"
+        else:
+            spinner_text = "[bold green]Thinking...[/bold green]"
+
+        # Use Spinner directly as renderable
+        parts.append(Spinner("dots", text=spinner_text, style="green"))
+
+        return Group(*parts)
+
+    def start(self) -> None:
+        """Start the live display."""
+        if self._live is None:
+            self._live = Live(
+                self._build_display(),
+                console=self.console,
+                refresh_per_second=10,
+                transient=True,  # Remove when stopped
+            )
+            self._live.start()
+        else:
+            self._live.start()
+
+    def stop(self) -> None:
+        """Stop the live display."""
+        if self._live:
+            self._live.stop()
+
+    def update(self) -> None:
+        """Update the live display with current todo state."""
+        if self._live:
+            self._live.update(self._build_display())
+
+
+def show_todo_panel(todo_manager: TodoManager) -> None:
+    """Show the current todo list as a panel."""
+    todos = todo_manager.get_todos()
+    if not todos:
+        return  # 할 일이 없으면 표시하지 않음
+
+    summary = todo_manager.get_summary()
+
+    # 상태별 아이콘
+    status_icons = {
+        "completed": "[green]✅[/green]",
+        "in_progress": "[yellow]🔄[/yellow]",
+        "pending": "[dim]⬜[/dim]",
+    }
+
+    # Todo 항목 포맷팅
+    lines = []
+    for todo in todos:
+        status = todo.get("status", "pending")
+        icon = status_icons.get(status, "⬜")
+        content = todo.get("content", "")
+
+        # 상태에 따라 텍스트 스타일 적용
+        if status == "completed":
+            lines.append(f"{icon} [dim strikethrough]{content}[/dim strikethrough]")
+        elif status == "in_progress":
+            lines.append(f"{icon} [bold]{content}[/bold]")
+        else:
+            lines.append(f"{icon} {content}")
+
+    # 패널 제목
+    title = f"📋 Tasks ({summary['completed']}/{summary['total']} completed)"
+
+    console.print(Panel(
+        "\n".join(lines),
+        title=title,
+        border_style="blue",
+    ))
 
 
 def show_context_status(agent_loop: 'AgentLoop') -> None:
@@ -130,18 +256,28 @@ def chat() -> None:
     default=True,
     help="Require approval for file modifications (default: enabled)",
 )
-def agent(approval: bool) -> None:
+@click.option(
+    "--debug",
+    is_flag=True,
+    default=False,
+    help="Enable debug output (shows LLM requests, tool executions, etc.)",
+)
+def agent(approval: bool, debug: bool) -> None:
     """Start an interactive agent session with tools."""
     check_api_key()
+
+    # Create TodoManager (세션별 인스턴스)
+    todo_manager = TodoManager()
 
     # Create approval manager if enabled
     approval_manager = ApprovalManager(enabled=approval) if approval else None
 
-    # Create executor with approval plugin
-    executor = ToolExecutor(approval_manager=approval_manager)
+    # Create executor with approval plugin and TodoManager
+    tools = get_all_tools(todo_manager=todo_manager)
+    executor = ToolExecutor(tools=tools, approval_manager=approval_manager)
 
-    # Create agent loop with executor
-    agent_loop = AgentLoop(executor=executor)
+    # Create agent loop with executor and TodoManager
+    agent_loop = AgentLoop(executor=executor, todo_manager=todo_manager, debug=debug)
 
     # Show welcome message
     welcome_msg = (
@@ -156,6 +292,9 @@ def agent(approval: bool) -> None:
         welcome_msg += "\n\n[green]✓ Approval mode enabled[/green]\n[dim]You will be asked before file modifications[/dim]"
     else:
         welcome_msg += "\n\n[yellow]⚠️  Approval mode disabled[/yellow]\n[dim]Files will be modified without confirmation (use --approval to enable)[/dim]"
+
+    if debug:
+        welcome_msg += "\n[cyan]🔍 Debug mode enabled[/cyan]"
 
     console.print(Panel(welcome_msg, title="Welcome"))
 
@@ -195,23 +334,33 @@ def agent(approval: bool) -> None:
                 continue
 
             try:
-                # Use a status object that can be stopped and restarted
-                status = console.status("[bold green]Thinking...[/bold green]")
-                status.start()
+                # Create TodoSpinner that shows task list + spinner
+                spinner = TodoSpinner(console, todo_manager)
+                spinner.start()
+
+                # Set spinner callbacks on approval manager for user input prompts
+                if approval_manager:
+                    approval_manager.pause_spinner = spinner.stop
+                    approval_manager.resume_spinner = spinner.start
 
                 try:
                     # Pass callbacks to stop/start spinner during AskUserQuestion
+                    # Also pass update callback to refresh todo display
                     response = agent_loop.run(
                         user_input,
-                        pause_spinner_callback=status.stop,
-                        resume_spinner_callback=status.start
+                        pause_spinner_callback=spinner.stop,
+                        resume_spinner_callback=spinner.start,
+                        update_spinner_callback=spinner.update
                     )
                 finally:
                     # Ensure spinner is stopped
-                    status.stop()
+                    spinner.stop()
 
                 console.print()
                 console.print(Markdown(response))
+
+                # Show todo panel if there are todos (final state)
+                show_todo_panel(todo_manager)
 
                 # Show context usage after each response
                 show_context_status(agent_loop)
@@ -262,18 +411,28 @@ def ask(message: str) -> None:
     default=True,
     help="Require approval for file modifications (default: enabled)",
 )
-def run(message: str, approval: bool) -> None:
+@click.option(
+    "--debug",
+    is_flag=True,
+    default=False,
+    help="Enable debug output (shows LLM requests, tool executions, etc.)",
+)
+def run(message: str, approval: bool, debug: bool) -> None:
     """Run agent with a single task (with tools)."""
     check_api_key()
+
+    # Create TodoManager (세션별 인스턴스)
+    todo_manager = TodoManager()
 
     # Create approval manager if enabled
     approval_manager = ApprovalManager(enabled=approval) if approval else None
 
-    # Create executor with approval plugin
-    executor = ToolExecutor(approval_manager=approval_manager)
+    # Create executor with approval plugin and TodoManager
+    tools = get_all_tools(todo_manager=todo_manager)
+    executor = ToolExecutor(tools=tools, approval_manager=approval_manager)
 
-    # Create agent loop with executor
-    agent_loop = AgentLoop(executor=executor)
+    # Create agent loop with executor and TodoManager
+    agent_loop = AgentLoop(executor=executor, todo_manager=todo_manager, debug=debug)
 
     if approval:
         console.print("[green]✓ Approval mode enabled[/green]")
@@ -282,11 +441,37 @@ def run(message: str, approval: bool) -> None:
         console.print("[yellow]⚠️  Approval mode disabled[/yellow]")
         console.print("[dim]Files will be modified without confirmation[/dim]\n")
 
+    if debug:
+        console.print("[cyan]🔍 Debug mode enabled[/cyan]\n")
+
+    # Add spacing before spinner
+    console.print()
+
     try:
-        with console.status("[bold green]Working...[/bold green]"):
-            response = agent_loop.run(message)
+        # Create TodoSpinner that shows task list + spinner
+        spinner = TodoSpinner(console, todo_manager)
+        spinner.start()
+
+        # Set spinner callbacks on approval manager for user input prompts
+        if approval_manager:
+            approval_manager.pause_spinner = spinner.stop
+            approval_manager.resume_spinner = spinner.start
+
+        try:
+            response = agent_loop.run(
+                message,
+                pause_spinner_callback=spinner.stop,
+                resume_spinner_callback=spinner.start,
+                update_spinner_callback=spinner.update
+            )
+        finally:
+            spinner.stop()
 
         console.print(Markdown(response))
+
+        # Show todo panel if there are todos (final state)
+        show_todo_panel(todo_manager)
+
     except RateLimitError:
         console.print("\n[red bold]⚠️  Rate Limit Exceeded[/red bold]")
         console.print("[yellow]Please wait a moment before trying again.[/yellow]")
