@@ -175,9 +175,8 @@ def agent() -> None:
                 continue
 
             try:
-                with console.status("[bold green]Thinking...[/bold green]") as status:
-                    # Pass status to agent loop so it can pause during AskUserQuestion
-                    response = agent_loop.run(user_input, status_callback=status.stop)
+                with console.status("[bold green]Thinking...[/bold green]"):
+                    response = agent_loop.run(user_input)
 
                 console.print()
                 console.print(Markdown(response))
