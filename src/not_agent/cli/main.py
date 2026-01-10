@@ -175,8 +175,16 @@ def agent() -> None:
                 continue
 
             try:
-                with console.status("[bold green]Thinking...[/bold green]"):
-                    response = agent_loop.run(user_input)
+                # Use a status object that can be stopped and restarted
+                status = console.status("[bold green]Thinking...[/bold green]")
+                status.start()
+
+                try:
+                    # Pass callback to stop spinner during AskUserQuestion
+                    response = agent_loop.run(user_input, pause_spinner_callback=status.stop)
+                finally:
+                    # Ensure spinner is stopped
+                    status.stop()
 
                 console.print()
                 console.print(Markdown(response))

@@ -109,12 +109,14 @@ SAFETY:
 - NEVER modify files without user approval (via AskUserQuestion)
 - Ask before deleting files or making irreversible changes"""
 
-    def run(self, user_message: str) -> str:
+    def run(self, user_message: str, pause_spinner_callback: Any = None) -> str:
         """Run the agent loop with a user message.
 
         Args:
             user_message: The user's input message
+            pause_spinner_callback: Optional callback to pause spinner during user input
         """
+        self.pause_spinner_callback = pause_spinner_callback
         self.messages.append({"role": "user", "content": user_message})
 
         print(f"\n{'='*60}")
@@ -153,6 +155,10 @@ SAFETY:
             for idx, tool_use in enumerate(tool_uses):
                 print(f"\n  Tool {idx + 1}: {tool_use.name}")
                 print(f"    Input: {str(tool_use.input)[:150]}...")
+
+                # Pause spinner for AskUserQuestion to allow clean user input
+                if tool_use.name == "AskUserQuestion" and self.pause_spinner_callback:
+                    self.pause_spinner_callback()
 
                 # Update executor with current conversation history for approval checking
                 self.executor.set_conversation_history(self.messages)
