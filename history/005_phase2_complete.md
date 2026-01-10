@@ -23,7 +23,13 @@
 |------|------|------|
 | Bash | `tools/bash.py` | 쉘 명령어 실행 |
 
-### 4. 에이전트 루프
+### 4. 웹 도구
+| 도구 | 파일 | 기능 |
+|------|------|------|
+| WebSearch | `tools/web_search.py` | 웹 검색 (Claude API 사용) |
+| WebFetch | `tools/web_fetch.py` | URL 내용 가져오기 및 처리 |
+
+### 5. 에이전트 루프
 - **AgentLoop** (`agent/loop.py`): LLM과 도구를 연결하는 메인 루프
   - 사용자 메시지 → LLM 호출 → 도구 실행 → 결과 피드백 → 반복
 
@@ -51,7 +57,9 @@ src/not_agent/
 │   ├── glob_tool.py
 │   ├── grep.py
 │   ├── read.py
-│   └── write.py
+│   ├── write.py
+│   ├── web_search.py  # 웹 검색
+│   └── web_fetch.py   # URL 내용 가져오기
 ├── llm/
 │   └── claude.py
 └── cli/

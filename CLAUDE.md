@@ -46,6 +46,7 @@ not-agent/
 
 ## 작업 시 참고사항
 - `history/` 폴더에 중요한 의사결정과 진행상황 기록
+- 각 Phase 시작 시 계획 문서 작성 후 사용자 검토
 - 각 Phase 완료 시 마일스톤 문서 작성
 - 코드 작성 전 설계 먼저 검토
 
@@ -71,3 +72,4 @@ not-agent run "태스크 내용"
 - 2026-01-09: 프로젝트 시작, 계획 수립
 - 2026-01-09: Phase 1 완료 (기초 인프라, LLM 연동, CLI)
 - 2026-01-09: Phase 2 완료 (Read, Write, Edit, Glob, Grep, Bash 도구)
+- 2026-01-10: Phase 2 확장 (WebSearch, WebFetch 도구 추가)
