@@ -55,8 +55,24 @@ class ToolExecutor:
                 for item in content:
                     if isinstance(item, dict) and item.get("type") == "tool_result":
                         result_content = item.get("content", "")
-                        # Check if user approved (Yes, proceed, etc.)
-                        if any(keyword in str(result_content).lower() for keyword in ["yes", "proceed", "확인", "진행"]):
+                        result_lower = str(result_content).lower()
+
+                        # Check if user approved (various approval keywords)
+                        approval_keywords = [
+                            "yes", "proceed", "확인", "진행", "네", "저장",
+                            "create", "생성", "만들", "수정", "edit", "ok", "okay"
+                        ]
+
+                        # Also check for rejection keywords to be more explicit
+                        rejection_keywords = ["no", "cancel", "아니", "취소", "don't"]
+
+                        # If any rejection keyword found, definitely not approved
+                        if any(keyword in result_lower for keyword in rejection_keywords):
+                            found_approval = False
+                            break
+
+                        # If any approval keyword found, mark as approved
+                        if any(keyword in result_lower for keyword in approval_keywords):
                             found_approval = True
 
         if found_ask_user and found_approval:
