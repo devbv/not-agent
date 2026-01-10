@@ -42,12 +42,13 @@ not-agent/
 - [x] 기술 스택 결정 (Python)
 - [x] Phase 1 완료 (기초 인프라)
 - [x] Phase 2 완료 (핵심 도구 구현)
-- [ ] Phase 3 시작 (에이전트 루프 개선)
+- [x] Phase 3 완료 (에이전트 루프 개선)
+- [ ] Phase 4 시작 (코드 생성 및 테스트)
 
 ## 작업 시 참고사항
 - `history/` 폴더에 중요한 의사결정과 진행상황 기록
-- 각 Phase 시작 시 계획 문서 작성 후 사용자 검토
-- 각 Phase 완료 시 마일스톤 문서 작성
+- 중요: 각 Phase 작업 시작시 계획 문서를 history 폴더 아래에 기록
+- 중요: 각 Phase 완료 시 마일스톤 문서 작성
 - 코드 작성 전 설계 먼저 검토
 
 ## 명령어
@@ -73,3 +74,4 @@ not-agent run "태스크 내용"
 - 2026-01-09: Phase 1 완료 (기초 인프라, LLM 연동, CLI)
 - 2026-01-09: Phase 2 완료 (Read, Write, Edit, Glob, Grep, Bash 도구)
 - 2026-01-10: Phase 2 확장 (WebSearch, WebFetch 도구 추가)
+- 2026-01-10: Phase 3 완료 (컨텍스트 관리, AskUserQuestion 도구)

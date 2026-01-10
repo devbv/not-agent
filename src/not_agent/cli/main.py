@@ -7,14 +7,49 @@ import click
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.progress import BarColumn, Progress, TextColumn
 from prompt_toolkit import prompt
 from prompt_toolkit.history import FileHistory
+
+from anthropic import RateLimitError, APIError
 
 from not_agent.agent import AgentLoop
 from not_agent.llm.claude import ClaudeClient
 
 
 console = Console()
+
+
+def show_context_status(agent_loop: 'AgentLoop') -> None:
+    """Show context usage status with a progress bar."""
+    usage = agent_loop.get_context_usage()
+    percentage = usage['percentage']
+    current = usage['current']
+    max_tokens = usage['max']
+    messages = usage['messages']
+
+    # Choose color based on usage
+    if percentage >= 75:
+        color = "red"
+        status = "⚠️  High"
+    elif percentage >= 50:
+        color = "yellow"
+        status = "⚡ Medium"
+    else:
+        color = "green"
+        status = "✓ Good"
+
+    # Create a simple text-based progress bar
+    bar_width = 30
+    # Cap at 100% for visual representation
+    display_percentage = min(percentage, 100)
+    filled = int(bar_width * display_percentage / 100)
+    bar = "█" * filled + "░" * (bar_width - filled)
+
+    console.print(
+        f"\n[dim]Context: [{color}]{bar}[/{color}] "
+        f"{percentage:.1f}% ({current:,}/{max_tokens:,} tokens, {messages} msgs) {status}[/dim]"
+    )
 
 
 def check_api_key() -> None:
@@ -66,11 +101,20 @@ def chat() -> None:
                 console.print("[dim]Goodbye![/dim]")
                 break
 
-            with console.status("[bold green]Thinking...[/bold green]"):
-                response = client.chat(user_input)
+            try:
+                with console.status("[bold green]Thinking...[/bold green]"):
+                    response = client.chat(user_input)
 
-            console.print()
-            console.print(Markdown(response))
+                console.print()
+                console.print(Markdown(response))
+
+            except RateLimitError:
+                console.print("\n[red bold]⚠️  Rate Limit Exceeded[/red bold]")
+                console.print("[yellow]Please wait a moment before trying again.[/yellow]")
+            except APIError as e:
+                console.print("\n[red bold]⚠️  API Error[/red bold]")
+                console.print(f"[yellow]{str(e)}[/yellow]")
+                console.print("[dim]Please check your connection and API key.[/dim]")
 
         except KeyboardInterrupt:
             console.print("\n[dim]Use 'exit' to quit[/dim]")
@@ -87,7 +131,9 @@ def agent() -> None:
         Panel(
             "[bold blue]Not Agent[/bold blue] - Agent Mode (with Tools)\n"
             "Type [bold]exit[/bold] or [bold]quit[/bold] to end the session.\n"
-            "Type [bold]reset[/bold] to clear conversation history.",
+            "Type [bold]reset[/bold] to clear conversation history.\n"
+            "Type [bold]status[/bold] to show context usage.\n"
+            "Type [bold]compact[/bold] to manually compress context.",
             title="Welcome",
         )
     )
@@ -115,11 +161,38 @@ def agent() -> None:
                 console.print("[dim]Conversation history cleared.[/dim]")
                 continue
 
-            with console.status("[bold green]Thinking...[/bold green]"):
-                response = agent_loop.run(user_input)
+            if user_input.lower() == "status":
+                show_context_status(agent_loop)
+                continue
 
-            console.print()
-            console.print(Markdown(response))
+            if user_input.lower() == "compact":
+                # Force manual compaction
+                if len(agent_loop.messages) <= agent_loop.preserve_recent_messages + 2:
+                    console.print("[yellow]Not enough messages to compact.[/yellow]")
+                    console.print(f"[dim]Need at least {agent_loop.preserve_recent_messages + 3} messages.[/dim]")
+                else:
+                    agent_loop._compact_context()
+                continue
+
+            try:
+                with console.status("[bold green]Thinking...[/bold green]") as status:
+                    # Pass status to agent loop so it can pause during AskUserQuestion
+                    response = agent_loop.run(user_input, status_callback=status.stop)
+
+                console.print()
+                console.print(Markdown(response))
+
+                # Show context usage after each response
+                show_context_status(agent_loop)
+
+            except RateLimitError:
+                console.print("\n[red bold]⚠️  Rate Limit Exceeded[/red bold]")
+                console.print("[yellow]Please wait a moment before trying again.[/yellow]")
+                console.print("[dim]Tip: You can use 'reset' to reduce context size.[/dim]")
+            except APIError as e:
+                console.print("\n[red bold]⚠️  API Error[/red bold]")
+                console.print(f"[yellow]{str(e)}[/yellow]")
+                console.print("[dim]Please check your connection and API key.[/dim]")
 
         except KeyboardInterrupt:
             console.print("\n[dim]Use 'exit' to quit[/dim]")
@@ -135,10 +208,20 @@ def ask(message: str) -> None:
 
     client = ClaudeClient()
 
-    with console.status("[bold green]Thinking...[/bold green]"):
-        response = client.chat(message)
+    try:
+        with console.status("[bold green]Thinking...[/bold green]"):
+            response = client.chat(message)
 
-    console.print(Markdown(response))
+        console.print(Markdown(response))
+    except RateLimitError:
+        console.print("\n[red bold]⚠️  Rate Limit Exceeded[/red bold]")
+        console.print("[yellow]Please wait a moment before trying again.[/yellow]")
+        sys.exit(1)
+    except APIError as e:
+        console.print("\n[red bold]⚠️  API Error[/red bold]")
+        console.print(f"[yellow]{str(e)}[/yellow]")
+        console.print("[dim]Please check your connection and API key.[/dim]")
+        sys.exit(1)
 
 
 @cli.command()
@@ -149,10 +232,19 @@ def run(message: str) -> None:
 
     agent_loop = AgentLoop()
 
-    with console.status("[bold green]Working...[/bold green]"):
-        response = agent_loop.run(message)
+    try:
+        with console.status("[bold green]Working...[/bold green]"):
+            response = agent_loop.run(message)
 
-    console.print(Markdown(response))
+        console.print(Markdown(response))
+    except RateLimitError:
+        console.print("\n[red bold]⚠️  Rate Limit Exceeded[/red bold]")
+        console.print("[yellow]Please wait a moment before trying again.[/yellow]")
+    except APIError as e:
+        console.print("\n[red bold]⚠️  API Error[/red bold]")
+        console.print(f"[yellow]{str(e)}[/yellow]")
+        console.print("[dim]Please check your connection and API key.[/dim]")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
