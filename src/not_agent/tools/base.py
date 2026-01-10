@@ -40,6 +40,19 @@ class BaseTool(ABC):
         """Execute the tool with given parameters."""
         pass
 
+    def get_approval_description(self, **kwargs: Any) -> str | None:
+        """
+        승인 플러그인에게 제공할 설명.
+
+        Args:
+            **kwargs: Tool의 execute() 파라미터
+
+        Returns:
+            None: 이 도구는 승인 불필요
+            str: 승인 필요 - 사용자에게 보여줄 설명
+        """
+        return None  # 기본값: 승인 불필요
+
     def to_anthropic_tool(self) -> dict[str, Any]:
         """Convert to Anthropic API tool format."""
         # Clean properties - remove 'required' key from each property

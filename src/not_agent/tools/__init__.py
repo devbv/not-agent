@@ -3,6 +3,8 @@
 from .ask_user import AskUserQuestionTool
 from .base import BaseTool, ToolResult
 from .bash import BashTool
+from .confirm_write import ConfirmWriteTool
+from .draft_write import DraftWriteTool
 from .edit import EditTool
 from .glob_tool import GlobTool
 from .grep import GrepTool
@@ -16,6 +18,8 @@ __all__ = [
     "BaseTool",
     "ToolResult",
     "BashTool",
+    "ConfirmWriteTool",
+    "DraftWriteTool",
     "EditTool",
     "GlobTool",
     "GrepTool",
@@ -30,7 +34,9 @@ def get_all_tools() -> list[BaseTool]:
     """Get instances of all available tools."""
     return [
         ReadTool(),
-        WriteTool(),
+        # WriteTool removed - use draft_write + auto-confirm instead
+        DraftWriteTool(),
+        # ConfirmWriteTool removed - auto-triggered by system, not LLM
         EditTool(),
         GlobTool(),
         GrepTool(),

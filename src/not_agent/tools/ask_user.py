@@ -2,7 +2,6 @@
 
 from typing import Any
 
-from prompt_toolkit import prompt
 from rich.console import Console
 from rich.panel import Panel
 
@@ -79,7 +78,7 @@ class AskUserQuestionTool(BaseTool):
                 # Get user input
                 while True:
                     try:
-                        choice = prompt("\n→ Enter choice (1-{max}): ".replace("{max}", str(len(options)))).strip()
+                        choice = input(f"\n→ Enter choice (1-{len(options)}): ").strip()
 
                         if not choice:
                             console.print("[yellow]Please enter a number[/yellow]")
@@ -109,7 +108,7 @@ class AskUserQuestionTool(BaseTool):
                 # Free-form question
                 console.print("[dim]Please type your answer:[/dim]")
 
-                answer = prompt("→ ").strip()
+                answer = input("→ ").strip()
 
                 if not answer:
                     return ToolResult(

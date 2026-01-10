@@ -1,6 +1,7 @@
 """Agent loop - Main agent execution loop."""
 
 import time
+from pathlib import Path
 from typing import Any
 
 from anthropic import Anthropic, RateLimitError, APIError
@@ -22,6 +23,7 @@ class AgentLoop:
         compaction_threshold: float = 0.75,
         preserve_recent_messages: int = 4,
         enable_auto_compaction: bool = True,
+        executor: ToolExecutor | None = None,
     ) -> None:
         self.client = Anthropic()
         self.model = model
@@ -31,9 +33,11 @@ class AgentLoop:
         self.compaction_threshold = compaction_threshold
         self.preserve_recent_messages = preserve_recent_messages
         self.enable_auto_compaction = enable_auto_compaction
-        self.executor = ToolExecutor()
+        self.executor = executor or ToolExecutor()
         self.messages: list[dict[str, Any]] = []
         self.system_prompt = self._get_system_prompt()
+        # Track pending draft_write for auto-confirm
+        self.pending_draft: dict[str, str] | None = None
 
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the agent."""
@@ -41,82 +45,63 @@ class AgentLoop:
 
 IMPORTANT: You MUST use tools to complete tasks. Do NOT just explain how to do something - actually DO it using your tools.
 
+WORKFLOW: You can use multiple turns:
+- Turn 1: Use tools to gather information (read, glob, grep, etc.)
+- Turn 2+: Use tools to take action (write, edit, bash, etc.)
+- You are NOT required to use tools in every single turn if you need to process information first
+
 Available tools:
 - read: Read file contents
-- write: Write/create files
+- draft_write: Declare intention to write a file (system will auto-save content in next turn)
 - edit: Edit files by replacing text
 - glob: Find files by pattern (e.g., "**/*.py")
 - grep: Search file contents with regex
 - bash: Execute shell commands
 - WebSearch: Search the web for information
 - WebFetch: Fetch URL content and convert HTML to plain text
-- AskUserQuestion: Ask the user for clarification or confirmation
+- AskUserQuestion: Ask the user for clarification
 
 RULES:
 1. When asked to find/search something → USE the glob or grep tool immediately
 2. When asked to read/show a file → USE the read tool immediately
-3. When asked to create/modify a file → USE write or edit tool immediately
-4. When asked to run a command → USE the bash tool immediately
-5. When asked about recent/latest information → USE WebSearch immediately
-6. When asked to fetch/read a URL or web page → USE WebFetch to get the text, then analyze it
-7. NEVER explain methods or options - just take action
-8. After using tools, summarize what you found/did
+3. When asked to create a file → USE draft_write + show content (system auto-saves)
+4. When asked to modify a file → USE the edit tool immediately
+5. When asked to run a command → USE the bash tool immediately
+6. When asked about recent/latest information → USE WebSearch immediately
+7. When asked to fetch/read a URL or web page → USE WebFetch to get the text, then analyze it
+8. NEVER explain methods or options - just take action
+9. After using tools, summarize what you found/did
 
-WHEN TO CREATE FILES vs WHEN TO JUST ANSWER:
-- User asks "write a story/poem/essay" → Just answer directly in your response (DO NOT create a file)
-- User asks "explain/describe/tell me about X" → Just answer directly (DO NOT create a file)
-- User asks "create file X" or "save to file Y" → Use write tool to create the file
-- User asks "implement feature X" or "add code for Y" → Use write/edit tools (this is code work)
-- User asks for analysis/summary/explanation → Just answer directly (DO NOT create a file)
-- User explicitly mentions a file path or says "save" → Use write tool
+CRITICAL: File Writing Content Format
+When you receive "Draft registered for: <file_path>" feedback after calling draft_write:
+- Your NEXT response must contain ONLY the file content itself
+- DO NOT include meta-commentary like "Here's the content:" or "I will write:"
+- DO NOT include explanations about what you're doing
+- Start directly with the actual content that should be saved to the file
+- The system will automatically save your entire text response to the file
 
-IMPORTANT: DO NOT create files unless the user explicitly requests file creation or you're implementing code.
-For creative content (stories, poems, essays), answers, or explanations → respond directly without using write tool.
+Example WRONG:
+"이제 2차 창작물의 내용을 작성하겠습니다:
 
-ASKING QUESTIONS:
-- If you're UNSURE about requirements or approach → USE AskUserQuestion
-- Before DANGEROUS operations (rm -rf, DROP TABLE, etc.) → USE AskUserQuestion to confirm
-- When MULTIPLE VALID approaches exist → USE AskUserQuestion to let user choose
-- Provide options array when possible (easier for user to select)
-- Be specific and clear in your questions
+# Story Title
+..."
 
-FILE MODIFICATION POLICY (CRITICAL - ALWAYS FOLLOW):
-BEFORE using write, edit, or file deletion commands (rm, git rm), you MUST:
-1. Use AskUserQuestion to get user approval
-2. Clearly describe what file will be created/modified/deleted and why
-3. For new files: Show the file path and brief description of content
-4. For edits: Show the file path and what will be changed
-5. For deletions: Show which files will be deleted
-6. Provide clear Yes/No options
-7. ONLY exception: If user message explicitly contains approval keywords like:
-   - "yes, proceed"
-   - "go ahead"
-   - "do it"
-   - "confirmed"
-   Then you may skip asking and proceed directly
+Example CORRECT:
+"# Story Title
+Once upon a time..."
 
-EXAMPLE (Creating new file):
-question: "I'm about to create a new file 'src/utils/helper.py' with utility functions for data processing. Should I proceed?"
-options: [{"label": "Yes, create it", "description": "..."}, {"label": "No, don't create", "description": "..."}]
+"""
 
-EXAMPLE (Editing file):
-question: "I'm about to modify 'src/main.py' to add error handling in the parse() function. Should I proceed?"
-options: [{"label": "Yes, modify it", "description": "..."}, {"label": "No, cancel", "description": "..."}]
-
-SAFETY:
-- Always read files before editing them
-- Be careful with destructive bash commands
-- NEVER modify files without user approval (via AskUserQuestion)
-- Ask before deleting files or making irreversible changes"""
-
-    def run(self, user_message: str, pause_spinner_callback: Any = None) -> str:
+    def run(self, user_message: str, pause_spinner_callback: Any = None, resume_spinner_callback: Any = None) -> str:
         """Run the agent loop with a user message.
 
         Args:
             user_message: The user's input message
             pause_spinner_callback: Optional callback to pause spinner during user input
+            resume_spinner_callback: Optional callback to resume spinner after user input
         """
         self.pause_spinner_callback = pause_spinner_callback
+        self.resume_spinner_callback = resume_spinner_callback
         self.messages.append({"role": "user", "content": user_message})
 
         print(f"\n{'='*60}")
@@ -128,8 +113,9 @@ SAFETY:
             print(f"[TURN {turn + 1}/{self.max_turns}]")
             print(f"{'─'*60}")
 
-            # Force tool use on first turn
-            response = self._call_llm(force_tool=(turn == 0))
+            # Don't force tool use - let LLM decide when it's ready
+            # Forcing tools can cause incomplete parameters (e.g., write without content)
+            response = self._call_llm(force_tool=False)
 
             # Check if there are tool calls
             tool_uses = [
@@ -137,14 +123,97 @@ SAFETY:
             ]
 
             if not tool_uses:
-                # No tool calls, return the text response
-                print(f"\n[COMPLETE] No tool calls, returning text response")
+                # No tool calls - check if we need to auto-confirm a pending draft
                 text_content = [
                     block.text
                     for block in response.content
                     if isinstance(block, TextBlock)
                 ]
-                return "\n".join(text_content)
+                text_response = "\n".join(text_content)
+
+                if self.pending_draft and text_response.strip():
+                    # Auto-confirm the pending draft write
+                    file_path = self.pending_draft["file_path"]
+                    print(f"\n[AUTO-CONFIRM] Detected draft content, auto-confirming write to {file_path}")
+                    print(f"[AUTO-CONFIRM] Content length: {len(text_response)} chars")
+
+                    # Pause spinner during approval prompt
+                    if self.pause_spinner_callback:
+                        self.pause_spinner_callback()
+
+                    # Get approval from user
+                    approved = True
+                    if self.executor.approval and self.executor.approval.enabled:
+                        lines = len(text_response.split("\n"))
+                        path = Path(file_path)
+                        exists = path.exists()
+
+                        if exists:
+                            approval_desc = f"Overwrite {file_path} ({lines} lines)"
+                        else:
+                            approval_desc = f"Write {lines} lines to {file_path} (new file)"
+
+                        approved = self.executor.approval.request("confirm_write", approval_desc)
+
+                    # Resume spinner
+                    if self.resume_spinner_callback:
+                        self.resume_spinner_callback()
+
+                    # Execute write if approved
+                    if approved:
+                        try:
+                            path = Path(file_path)
+                            path.parent.mkdir(parents=True, exist_ok=True)
+
+                            with open(path, "w", encoding="utf-8") as f:
+                                f.write(text_response)
+
+                            result_msg = f"Successfully wrote {len(text_response)} characters to {file_path}"
+                            print(f"[AUTO-CONFIRM] {result_msg}")
+
+                            # Clear pending draft
+                            self.pending_draft = None
+
+                            # Continue to next turn
+                            self.messages.append({"role": "assistant", "content": response.content})
+                            self.messages.append({
+                                "role": "user",
+                                "content": f"File successfully written. {result_msg}"
+                            })
+                            continue
+
+                        except Exception as e:
+                            error_msg = f"Error writing file: {e}"
+                            print(f"[AUTO-CONFIRM] Error: {error_msg}")
+
+                            # Clear pending draft on error
+                            self.pending_draft = None
+
+                            # Continue with error message
+                            self.messages.append({"role": "assistant", "content": response.content})
+                            self.messages.append({
+                                "role": "user",
+                                "content": f"Failed to write file. {error_msg}"
+                            })
+                            continue
+                    else:
+                        # User denied approval
+                        print(f"[AUTO-CONFIRM] User denied permission")
+
+                        # Clear pending draft
+                        self.pending_draft = None
+
+                        # Continue with denial message
+                        self.messages.append({"role": "assistant", "content": response.content})
+                        self.messages.append({
+                            "role": "user",
+                            "content": "User denied permission for this action. Please ask what they would like to do instead."
+                        })
+                        continue
+
+                # No pending draft, return text response
+                print(f"\n[COMPLETE] No tool calls, returning text response")
+                return text_response
 
             # Process tool calls
             self.messages.append({"role": "assistant", "content": response.content})
@@ -152,18 +221,47 @@ SAFETY:
             print(f"\n[TOOL EXECUTION] Executing {len(tool_uses)} tool(s)...")
 
             tool_results = []
+
+            # Extract text from current response for confirm_write auto-fill
+            text_blocks = [
+                block.text for block in response.content if isinstance(block, TextBlock)
+            ]
+            current_response_text = "\n".join(text_blocks)
+
             for idx, tool_use in enumerate(tool_uses):
                 print(f"\n  Tool {idx + 1}: {tool_use.name}")
-                print(f"    Input: {str(tool_use.input)[:150]}...")
+
+                # Special handling for confirm_write: auto-fill content from current response
+                tool_input = dict(tool_use.input)  # Make a copy
+
+                if tool_use.name == "confirm_write" and "content" not in tool_input:
+                    if current_response_text.strip():
+                        print(f"    [AUTO-FILL] confirm_write missing content, using current response text ({len(current_response_text)} chars)")
+                        tool_input["content"] = current_response_text
+                    else:
+                        print(f"    [ERROR] confirm_write missing content and no text in current response")
+
+                # Show input for debugging
+                input_str = str(tool_input)
+                if len(input_str) > 150:
+                    print(f"    Input: {input_str[:150]}...")
+                else:
+                    print(f"    Input: {input_str}")
 
                 # Pause spinner for AskUserQuestion to allow clean user input
                 if tool_use.name == "AskUserQuestion" and self.pause_spinner_callback:
                     self.pause_spinner_callback()
 
-                # Update executor with current conversation history for approval checking
-                self.executor.set_conversation_history(self.messages)
+                result = self.executor.execute(tool_use.name, tool_input)
 
-                result = self.executor.execute(tool_use.name, tool_use.input)
+                # Resume spinner after AskUserQuestion
+                if tool_use.name == "AskUserQuestion" and self.resume_spinner_callback:
+                    self.resume_spinner_callback()
+
+                # Track draft_write for auto-confirm in next turn
+                if tool_use.name == "draft_write" and result.success:
+                    self.pending_draft = {"file_path": tool_input["file_path"]}
+                    print(f"    [PENDING] Draft registered for auto-confirm: {tool_input['file_path']}")
 
                 print(f"    Success: {result.success}")
                 if result.success:

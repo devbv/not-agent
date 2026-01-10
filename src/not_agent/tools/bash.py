@@ -9,6 +9,17 @@ from .base import BaseTool, ToolResult
 class BashTool(BaseTool):
     """Tool for executing shell commands."""
 
+    # 위험한 명령어 패턴
+    DANGEROUS_PATTERNS = [
+        "rm ",
+        "mv ",
+        "dd ",
+        "format",
+        ">",  # 리다이렉션
+        ">>",  # 추가 리다이렉션
+        "|",  # 파이프 (일부 위험할 수 있음)
+    ]
+
     @property
     def name(self) -> str:
         return "bash"
@@ -39,6 +50,22 @@ class BashTool(BaseTool):
                 "required": False,
             },
         }
+
+    def get_approval_description(
+        self,
+        command: str,
+        timeout: int = 120,
+        cwd: str | None = None,
+        **kwargs: Any,
+    ) -> str | None:
+        """위험한 명령어만 승인 요청"""
+        # 위험한 패턴 체크
+        for pattern in self.DANGEROUS_PATTERNS:
+            if pattern in command:
+                return f"Run command: {command}"
+
+        # 안전한 명령어는 승인 불필요
+        return None
 
     def execute(
         self,

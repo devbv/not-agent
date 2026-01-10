@@ -14,6 +14,8 @@ from prompt_toolkit.history import FileHistory
 from anthropic import RateLimitError, APIError
 
 from not_agent.agent import AgentLoop
+from not_agent.agent.approval import ApprovalManager
+from not_agent.agent.executor import ToolExecutor
 from not_agent.llm.claude import ClaudeClient
 
 
@@ -123,22 +125,40 @@ def chat() -> None:
 
 
 @cli.command()
-def agent() -> None:
+@click.option(
+    "--approval/--no-approval",
+    default=True,
+    help="Require approval for file modifications (default: enabled)",
+)
+def agent(approval: bool) -> None:
     """Start an interactive agent session with tools."""
     check_api_key()
 
-    console.print(
-        Panel(
-            "[bold blue]Not Agent[/bold blue] - Agent Mode (with Tools)\n"
-            "Type [bold]exit[/bold] or [bold]quit[/bold] to end the session.\n"
-            "Type [bold]reset[/bold] to clear conversation history.\n"
-            "Type [bold]status[/bold] to show context usage.\n"
-            "Type [bold]compact[/bold] to manually compress context.",
-            title="Welcome",
-        )
+    # Create approval manager if enabled
+    approval_manager = ApprovalManager(enabled=approval) if approval else None
+
+    # Create executor with approval plugin
+    executor = ToolExecutor(approval_manager=approval_manager)
+
+    # Create agent loop with executor
+    agent_loop = AgentLoop(executor=executor)
+
+    # Show welcome message
+    welcome_msg = (
+        "[bold blue]Not Agent[/bold blue] - Agent Mode (with Tools)\n"
+        "Type [bold]exit[/bold] or [bold]quit[/bold] to end the session.\n"
+        "Type [bold]reset[/bold] to clear conversation history.\n"
+        "Type [bold]status[/bold] to show context usage.\n"
+        "Type [bold]compact[/bold] to manually compress context."
     )
 
-    agent_loop = AgentLoop()
+    if approval:
+        welcome_msg += "\n\n[green]✓ Approval mode enabled[/green]\n[dim]You will be asked before file modifications[/dim]"
+    else:
+        welcome_msg += "\n\n[yellow]⚠️  Approval mode disabled[/yellow]\n[dim]Files will be modified without confirmation (use --approval to enable)[/dim]"
+
+    console.print(Panel(welcome_msg, title="Welcome"))
+
     history = FileHistory(".not_agent_history")
 
     while True:
@@ -180,8 +200,12 @@ def agent() -> None:
                 status.start()
 
                 try:
-                    # Pass callback to stop spinner during AskUserQuestion
-                    response = agent_loop.run(user_input, pause_spinner_callback=status.stop)
+                    # Pass callbacks to stop/start spinner during AskUserQuestion
+                    response = agent_loop.run(
+                        user_input,
+                        pause_spinner_callback=status.stop,
+                        resume_spinner_callback=status.start
+                    )
                 finally:
                     # Ensure spinner is stopped
                     status.stop()
@@ -233,11 +257,30 @@ def ask(message: str) -> None:
 
 @cli.command()
 @click.argument("message")
-def run(message: str) -> None:
+@click.option(
+    "--approval/--no-approval",
+    default=True,
+    help="Require approval for file modifications (default: enabled)",
+)
+def run(message: str, approval: bool) -> None:
     """Run agent with a single task (with tools)."""
     check_api_key()
 
-    agent_loop = AgentLoop()
+    # Create approval manager if enabled
+    approval_manager = ApprovalManager(enabled=approval) if approval else None
+
+    # Create executor with approval plugin
+    executor = ToolExecutor(approval_manager=approval_manager)
+
+    # Create agent loop with executor
+    agent_loop = AgentLoop(executor=executor)
+
+    if approval:
+        console.print("[green]✓ Approval mode enabled[/green]")
+        console.print("[dim]You will be asked before file modifications[/dim]\n")
+    else:
+        console.print("[yellow]⚠️  Approval mode disabled[/yellow]")
+        console.print("[dim]Files will be modified without confirmation[/dim]\n")
 
     try:
         with console.status("[bold green]Working...[/bold green]"):

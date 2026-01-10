@@ -17,7 +17,8 @@ class EditTool(BaseTool):
     def description(self) -> str:
         return (
             "Edit a file by replacing an exact string with new content. "
-            "The old_string must match exactly (including whitespace)."
+            "The old_string must match exactly (including whitespace). "
+            "CRITICAL: You MUST provide ALL three required parameters (file_path, old_string, new_string) in a single call."
         )
 
     @property
@@ -30,12 +31,12 @@ class EditTool(BaseTool):
             },
             "old_string": {
                 "type": "string",
-                "description": "The exact string to replace",
+                "description": "The exact string to replace (must be provided in this call)",
                 "required": True,
             },
             "new_string": {
                 "type": "string",
-                "description": "The string to replace it with",
+                "description": "The COMPLETE replacement string (must be provided in this call)",
                 "required": True,
             },
             "replace_all": {
@@ -44,6 +45,23 @@ class EditTool(BaseTool):
                 "required": False,
             },
         }
+
+    def get_approval_description(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+        **kwargs: Any,
+    ) -> str:
+        """EditTool은 항상 승인 필요"""
+        old_lines = len(old_string.split("\n"))
+        new_lines = len(new_string.split("\n"))
+
+        if replace_all:
+            return f"Edit {file_path} (replace all occurrences: {old_lines}→{new_lines} lines)"
+        else:
+            return f"Edit {file_path} ({old_lines}→{new_lines} lines)"
 
     def execute(
         self,
