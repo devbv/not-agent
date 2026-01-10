@@ -69,9 +69,33 @@ ASKING QUESTIONS:
 - Provide options array when possible (easier for user to select)
 - Be specific and clear in your questions
 
+FILE MODIFICATION POLICY (CRITICAL - ALWAYS FOLLOW):
+BEFORE using write, edit, or file deletion commands (rm, git rm), you MUST:
+1. Use AskUserQuestion to get user approval
+2. Clearly describe what file will be created/modified/deleted and why
+3. For new files: Show the file path and brief description of content
+4. For edits: Show the file path and what will be changed
+5. For deletions: Show which files will be deleted
+6. Provide clear Yes/No options
+7. ONLY exception: If user message explicitly contains approval keywords like:
+   - "yes, proceed"
+   - "go ahead"
+   - "do it"
+   - "confirmed"
+   Then you may skip asking and proceed directly
+
+EXAMPLE (Creating new file):
+question: "I'm about to create a new file 'src/utils/helper.py' with utility functions for data processing. Should I proceed?"
+options: [{"label": "Yes, create it", "description": "..."}, {"label": "No, don't create", "description": "..."}]
+
+EXAMPLE (Editing file):
+question: "I'm about to modify 'src/main.py' to add error handling in the parse() function. Should I proceed?"
+options: [{"label": "Yes, modify it", "description": "..."}, {"label": "No, cancel", "description": "..."}]
+
 SAFETY:
 - Always read files before editing them
 - Be careful with destructive bash commands
+- NEVER modify files without user approval (via AskUserQuestion)
 - Ask before deleting files or making irreversible changes"""
 
     def run(self, user_message: str, status_callback: Any = None) -> str:
