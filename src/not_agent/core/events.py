@@ -10,6 +10,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, TypeVar
 
+from rich.console import Console
+
+_console = Console(stderr=True)
+
 # Type aliases
 EventHandler = Callable[["Event"], None]
 T = TypeVar("T", bound="Event")
@@ -252,14 +256,14 @@ class EventBus:
             try:
                 handler(event)
             except Exception as e:
-                print(f"[EventBus] Handler error for {event.event_type}: {e}")
+                _console.print(f"[yellow][EventBus][/yellow] Handler error for {event.event_type}: {e}")
 
         # Global handlers
         for handler in self._global_handlers:
             try:
                 handler(event)
             except Exception as e:
-                print(f"[EventBus] Global handler error for {event.event_type}: {e}")
+                _console.print(f"[yellow][EventBus][/yellow] Global handler error for {event.event_type}: {e}")
 
     def clear(self) -> None:
         """Clear all subscriptions."""

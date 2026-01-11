@@ -1,13 +1,13 @@
 """
-Permission System - 규칙 기반 권한 관리
+Permission System - Rule-based permission management.
 
-도구 실행 전 자동 승인/거부/질의를 결정하는 시스템.
+A system for determining automatic approval/denial/prompting before tool execution.
 - Permission enum: ALLOW, DENY, ASK
-- PermissionRule: 도구/경로/명령어 패턴 기반 규칙
-- PermissionManager: 규칙 평가 및 사용자 질의
+- PermissionRule: Rule based on tool/path/command patterns
+- PermissionManager: Rule evaluation and user prompting
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Callable
 import fnmatch
@@ -17,49 +17,49 @@ if TYPE_CHECKING:
 
 
 class Permission(Enum):
-    """권한 결정 타입."""
+    """Permission decision type."""
 
-    ALLOW = auto()  # 자동 승인
-    DENY = auto()   # 자동 거부
-    ASK = auto()    # 사용자에게 물어보기
+    ALLOW = auto()  # Auto approve
+    DENY = auto()   # Auto deny
+    ASK = auto()    # Ask user
 
 
 @dataclass
 class PermissionRule:
-    """권한 규칙 정의."""
+    """Permission rule definition."""
 
-    # 매칭 조건
+    # Matching conditions
     tool_pattern: str = "*"              # "write", "bash", "read", "*"
     path_pattern: str | None = None      # "/tmp/*", "*.test.py", None
     command_pattern: str | None = None   # "pytest*", "rm *", None
 
-    # 결정
+    # Decision
     permission: Permission = Permission.ASK
 
-    # 메타데이터
+    # Metadata
     description: str = ""
-    priority: int = 0  # 높을수록 먼저 평가
+    priority: int = 0  # Higher priority evaluated first
 
     def matches(self, tool_name: str, context: dict[str, Any]) -> bool:
-        """규칙이 현재 요청에 매칭되는지 확인."""
-        # 도구 이름 매칭
+        """Check if rule matches the current request."""
+        # Tool name matching
         if not fnmatch.fnmatch(tool_name, self.tool_pattern):
             return False
 
-        # 경로 매칭 (파일 관련 도구)
+        # Path matching (for file-related tools)
         if self.path_pattern:
             path = context.get("file_path") or context.get("path")
             if not path:
                 return False
-            # 경로의 basename도 체크 (패턴이 파일명만 있을 때)
+            # Also check path basename (when pattern is filename only)
             if not fnmatch.fnmatch(path, self.path_pattern):
-                # basename으로도 시도
-                import os
-                basename = os.path.basename(path)
+                # Try with basename
+                from pathlib import Path
+                basename = Path(path).name
                 if not fnmatch.fnmatch(basename, self.path_pattern):
                     return False
 
-        # 명령어 매칭 (bash 도구)
+        # Command matching (for bash tool)
         if self.command_pattern:
             command = context.get("command")
             if not command:
@@ -70,7 +70,7 @@ class PermissionRule:
         return True
 
     def to_dict(self) -> dict[str, Any]:
-        """직렬화."""
+        """Serialize to dictionary."""
         return {
             "tool_pattern": self.tool_pattern,
             "path_pattern": self.path_pattern,
@@ -82,7 +82,7 @@ class PermissionRule:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PermissionRule":
-        """딕셔너리에서 생성."""
+        """Create from dictionary."""
         permission_str = data.get("permission", "ask").upper()
         permission = Permission[permission_str]
 
@@ -97,11 +97,11 @@ class PermissionRule:
 
 
 class PermissionManager:
-    """규칙 기반 권한 관리자."""
+    """Rule-based permission manager."""
 
-    # 코드 생성/테스트에 최적화된 기본 규칙
+    # Default rules optimized for code generation/testing
     DEFAULT_RULES = [
-        # === 읽기 전용 도구: 항상 허용 ===
+        # === Read-only tools: always allow ===
         PermissionRule(
             tool_pattern="read",
             permission=Permission.ALLOW,
@@ -121,7 +121,7 @@ class PermissionManager:
             priority=-100,
         ),
 
-        # === 테스트 관련: 자동 승인 ===
+        # === Test-related: auto approve ===
         PermissionRule(
             tool_pattern="write",
             path_pattern="*test*.py",
@@ -158,7 +158,7 @@ class PermissionManager:
             priority=10,
         ),
 
-        # === 린팅/타입체크: 자동 승인 ===
+        # === Linting/type checking: auto approve ===
         PermissionRule(
             tool_pattern="bash",
             command_pattern="ruff *",
@@ -188,7 +188,7 @@ class PermissionManager:
             priority=10,
         ),
 
-        # === 임시 디렉토리: 허용 ===
+        # === Temp directory: allow ===
         PermissionRule(
             tool_pattern="write",
             path_pattern="/tmp/*",
@@ -197,7 +197,7 @@ class PermissionManager:
             priority=-50,
         ),
 
-        # === 위험한 명령어: 거부 ===
+        # === Dangerous commands: deny ===
         PermissionRule(
             tool_pattern="bash",
             command_pattern="rm -rf *",
@@ -213,7 +213,7 @@ class PermissionManager:
             priority=100,
         ),
 
-        # === 기본: 물어보기 ===
+        # === Default: ask user ===
         PermissionRule(
             tool_pattern="*",
             permission=Permission.ASK,
@@ -230,13 +230,13 @@ class PermissionManager:
         show_diff: bool = True,
     ):
         """
-        PermissionManager 초기화.
+        Initialize PermissionManager.
 
         Args:
-            enabled: 권한 시스템 활성화 여부
-            rules: 사용자 정의 규칙 목록
-            use_default_rules: 기본 규칙 사용 여부
-            show_diff: diff 표시 여부
+            enabled: Whether permission system is enabled
+            rules: Custom rule list
+            use_default_rules: Whether to use default rules
+            show_diff: Whether to show diff
         """
         self.enabled = enabled
         self.show_diff = show_diff
@@ -248,23 +248,23 @@ class PermissionManager:
         if rules:
             self.rules.extend(rules)
 
-        # 우선순위로 정렬 (높은 것 먼저)
+        # Sort by priority (higher first)
         self.rules.sort(key=lambda r: r.priority, reverse=True)
 
-        # 이력
+        # History
         self.history: list[tuple[str, Permission]] = []
 
-        # Spinner 콜백 (CLI에서 설정)
+        # Spinner callbacks (set by CLI)
         self.pause_spinner: Callable[[], None] | None = None
         self.resume_spinner: Callable[[], None] | None = None
 
     def add_rule(self, rule: PermissionRule) -> None:
-        """규칙 추가 후 재정렬."""
+        """Add rule and re-sort."""
         self.rules.append(rule)
         self.rules.sort(key=lambda r: r.priority, reverse=True)
 
     def evaluate(self, tool_name: str, context: dict[str, Any]) -> Permission:
-        """규칙을 순서대로 평가하여 권한 결정."""
+        """Evaluate rules in order to determine permission."""
         for rule in self.rules:
             if rule.matches(tool_name, context):
                 return rule.permission
@@ -278,16 +278,16 @@ class PermissionManager:
         diff: str | None = None,
     ) -> bool:
         """
-        권한 확인 (자동 결정 또는 사용자 질의).
+        Check permission (auto-decide or prompt user).
 
         Args:
-            tool_name: 도구 이름
-            details: 승인 요청 설명
-            context: 도구 입력 컨텍스트 (file_path, command 등)
-            diff: 선택적 diff 문자열
+            tool_name: Tool name
+            details: Approval request description
+            context: Tool input context (file_path, command, etc.)
+            diff: Optional diff string
 
         Returns:
-            True: 승인, False: 거부
+            True: approved, False: denied
         """
         if not self.enabled:
             return True
@@ -302,11 +302,11 @@ class PermissionManager:
             self.history.append((f"{tool_name}: {details}", permission))
             return False
 
-        # Permission.ASK: 사용자에게 물어보기
+        # Permission.ASK: prompt user
         return self._ask_user(tool_name, details, diff)
 
     def _ask_user(self, tool_name: str, details: str, diff: str | None) -> bool:
-        """사용자에게 승인 요청."""
+        """Request approval from user."""
         if self.pause_spinner:
             self.pause_spinner()
 
@@ -339,7 +339,7 @@ class PermissionManager:
                 self.resume_spinner()
 
     def _format_diff(self, diff: str) -> str:
-        """diff 포맷팅."""
+        """Format diff for display."""
         lines = []
         for line in diff.splitlines():
             if line.startswith("+++") or line.startswith("---"):
@@ -355,20 +355,20 @@ class PermissionManager:
         return "\n".join(lines)
 
     def get_history(self) -> list[tuple[str, Permission]]:
-        """이력 반환."""
+        """Return history."""
         return self.history.copy()
 
     def clear_history(self) -> None:
-        """이력 초기화."""
+        """Clear history."""
         self.history.clear()
 
     @classmethod
     def from_config(cls, config: "Config") -> "PermissionManager":
-        """설정에서 PermissionManager 생성."""
+        """Create PermissionManager from config."""
         enabled = config.get("approval_enabled", True)
         show_diff = config.get("show_diff", True)
 
-        # 설정 파일에서 규칙 로드
+        # Load rules from config file
         rules_data = config.get("permission_rules", [])
         rules = [PermissionRule.from_dict(r) for r in rules_data]
 

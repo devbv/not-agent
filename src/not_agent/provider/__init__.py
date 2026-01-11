@@ -1,4 +1,4 @@
-"""Provider module - LLM 프로바이더 추상화."""
+"""Provider module - LLM provider abstraction."""
 
 from .base import BaseProvider, ProviderResponse
 from .claude import ClaudeProvider

@@ -1,4 +1,4 @@
-"""Config module - 설정 관리."""
+"""Config module - Configuration management."""
 
 from .config import Config
 from .defaults import DEFAULT_CONFIG

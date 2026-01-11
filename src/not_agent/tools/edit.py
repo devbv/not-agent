@@ -52,7 +52,7 @@ class EditTool(BaseTool):
         replace_all: bool = False,
         **kwargs: Any,
     ) -> str:
-        """EditTool은 항상 승인 필요"""
+        """EditTool always requires approval."""
         old_lines = len(old_string.split("\n"))
         new_lines = len(new_string.split("\n"))
 

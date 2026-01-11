@@ -1,4 +1,4 @@
-"""프로바이더 레지스트리."""
+"""Provider registry."""
 
 from typing import Type, TYPE_CHECKING
 
@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from not_agent.config import Config
 
 
-# 등록된 프로바이더들
+# Registered providers
 PROVIDERS: dict[str, Type[BaseProvider]] = {
     "claude": ClaudeProvider,
 }
@@ -17,17 +17,17 @@ PROVIDERS: dict[str, Type[BaseProvider]] = {
 
 def get_provider(name: str, config: "Config") -> BaseProvider:
     """
-    이름으로 프로바이더 인스턴스 생성.
+    Create provider instance by name.
 
     Args:
-        name: 프로바이더 이름 (예: "claude")
-        config: 설정 객체
+        name: Provider name (e.g., "claude")
+        config: Configuration object
 
     Returns:
-        BaseProvider: 프로바이더 인스턴스
+        BaseProvider: Provider instance
 
     Raises:
-        ValueError: 알 수 없는 프로바이더 이름
+        ValueError: Unknown provider name
     """
     if name not in PROVIDERS:
         available = list(PROVIDERS.keys())
@@ -38,15 +38,15 @@ def get_provider(name: str, config: "Config") -> BaseProvider:
 
 def register_provider(name: str, provider_class: Type[BaseProvider]) -> None:
     """
-    프로바이더 등록 (확장용).
+    Register provider (for extension).
 
     Args:
-        name: 프로바이더 이름
-        provider_class: BaseProvider를 상속한 클래스
+        name: Provider name
+        provider_class: Class inheriting from BaseProvider
     """
     PROVIDERS[name] = provider_class
 
 
 def list_providers() -> list[str]:
-    """등록된 프로바이더 이름 목록 반환."""
+    """Return list of registered provider names."""
     return list(PROVIDERS.keys())

@@ -1,4 +1,4 @@
-"""Claude 프로바이더 구현."""
+"""Claude provider implementation."""
 
 import os
 import sys
@@ -16,7 +16,7 @@ _console = Console(stderr=True)
 
 
 class ClaudeProvider(BaseProvider):
-    """Anthropic Claude API 프로바이더."""
+    """Anthropic Claude API provider."""
 
     @property
     def name(self) -> str:
@@ -28,8 +28,8 @@ class ClaudeProvider(BaseProvider):
 
         if not api_key:
             _console.print(
-                "[red][Error][/red] ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다.\n"
-                "다음 명령어로 설정하세요:\n"
+                "[red][Error][/red] ANTHROPIC_API_KEY environment variable is not set.\n"
+                "Set it with:\n"
                 "  [cyan]export ANTHROPIC_API_KEY='your-api-key'[/cyan]"
             )
             sys.exit(1)
@@ -44,7 +44,7 @@ class ClaudeProvider(BaseProvider):
         tools: list[dict[str, Any]] | None = None,
         max_tokens: int = 16384,
     ) -> ProviderResponse:
-        """Claude API 호출."""
+        """Call Claude API."""
         kwargs: dict[str, Any] = {
             "model": self.model,
             "max_tokens": max_tokens,
@@ -70,9 +70,9 @@ class ClaudeProvider(BaseProvider):
 
     def simple_chat(self, message: str, system: str | None = None) -> str:
         """
-        단순 채팅용 메서드 (도구 없음).
+        Simple chat method (no tools).
 
-        기존 ClaudeClient.chat() 호환용.
+        For legacy ClaudeClient.chat() compatibility.
         """
         messages = [{"role": "user", "content": message}]
 

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from dotenv import load_dotenv
 import click
 
-# .env 파일에서 환경변수 로드 (프로젝트 루트에서 자동 검색)
+# Load environment variables from .env file (auto-searches from project root)
 load_dotenv()
 from rich.console import Console, Group
 from rich.markdown import Markdown
@@ -118,25 +118,25 @@ def show_todo_panel(todo_manager: TodoManager) -> None:
     """Show the current todo list as a panel."""
     todos = todo_manager.get_todos()
     if not todos:
-        return  # 할 일이 없으면 표시하지 않음
+        return  # Don't show if no todos
 
     summary = todo_manager.get_summary()
 
-    # 상태별 아이콘
+    # Status icons
     status_icons = {
         "completed": "[green]✅[/green]",
         "in_progress": "[yellow]🔄[/yellow]",
         "pending": "[dim]⬜[/dim]",
     }
 
-    # Todo 항목 포맷팅
+    # Format todo items
     lines = []
     for todo in todos:
         status = todo.get("status", "pending")
         icon = status_icons.get(status, "⬜")
         content = todo.get("content", "")
 
-        # 상태에 따라 텍스트 스타일 적용
+        # Apply text style based on status
         if status == "completed":
             lines.append(f"{icon} [dim strikethrough]{content}[/dim strikethrough]")
         elif status == "in_progress":
@@ -144,7 +144,7 @@ def show_todo_panel(todo_manager: TodoManager) -> None:
         else:
             lines.append(f"{icon} {content}")
 
-    # 패널 제목
+    # Panel title
     title = f"📋 Tasks ({summary['completed']}/{summary['total']} completed)"
 
     console.print(Panel(
@@ -190,8 +190,8 @@ def check_api_key() -> None:
     """Check if API key is set."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         console.print(
-            "[red]Error:[/red] ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다.\n"
-            "다음 명령어로 설정하세요:\n"
+            "[red]Error:[/red] ANTHROPIC_API_KEY environment variable is not set.\n"
+            "Set it with:\n"
             "  [bold]export ANTHROPIC_API_KEY='your-api-key'[/bold]"
         )
         sys.exit(1)
@@ -203,7 +203,7 @@ def check_api_key() -> None:
 def cli(ctx: click.Context) -> None:
     """Not Agent - A coding agent similar to Claude Code."""
     ctx.ensure_object(dict)
-    # 전역 Config 인스턴스 생성
+    # Create global Config instance
     ctx.obj["config"] = Config()
 
 
@@ -222,7 +222,7 @@ def chat(ctx: click.Context) -> None:
         )
     )
 
-    # Provider를 사용한 간단한 채팅
+    # Simple chat using provider
     provider = get_provider(config.get("provider", "claude"), config)
     history = FileHistory(".not_agent_history")
 
@@ -285,16 +285,16 @@ def agent(ctx: click.Context, model: str | None, approval: bool, debug: bool) ->
     check_api_key()
     config = ctx.obj["config"]
 
-    # CLI 옵션으로 Config 오버라이드
+    # Override Config with CLI options
     if model:
         config.set("model", model)
     config.set("approval_enabled", approval)
     config.set("debug", debug)
 
-    # Create TodoManager (세션별 인스턴스)
+    # Create TodoManager (per-session instance)
     todo_manager = TodoManager()
 
-    # Create event bus and logger (debug 모드에서만 로깅)
+    # Create event bus and logger (logging only in debug mode)
     event_bus = EventBus()
     event_logger: EventLogger | None = None
     if debug:
@@ -469,13 +469,13 @@ def run(ctx: click.Context, message: str, model: str | None, approval: bool, deb
     check_api_key()
     config = ctx.obj["config"]
 
-    # CLI 옵션으로 Config 오버라이드
+    # Override Config with CLI options
     if model:
         config.set("model", model)
     config.set("approval_enabled", approval)
     config.set("debug", debug)
 
-    # Create TodoManager (세션별 인스턴스)
+    # Create TodoManager (per-session instance)
     todo_manager = TodoManager()
 
     # Create approval manager if enabled

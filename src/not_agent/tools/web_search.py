@@ -107,13 +107,13 @@ class WebSearchTool(BaseTool):
                 )
 
             # Format results
-            output_lines = [f"검색 쿼리: {query}\n", "검색 결과:\n"]
+            output_lines = [f"Search query: {query}\n", "Search results:\n"]
 
             for idx, result in enumerate(results, 1):
                 output_lines.append(f"{idx}. {result['title']}")
                 output_lines.append(f"   URL: {result['url']}")
                 if result["snippet"]:
-                    output_lines.append(f"   설명: {result['snippet']}")
+                    output_lines.append(f"   Description: {result['snippet']}")
                 output_lines.append("")
 
             # Add sources section

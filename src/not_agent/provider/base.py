@@ -1,4 +1,4 @@
-"""LLM 프로바이더 기본 인터페이스."""
+"""LLM provider base interface."""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -10,20 +10,20 @@ if TYPE_CHECKING:
 
 @dataclass
 class ProviderResponse:
-    """프로바이더 응답 표준 형식."""
+    """Provider response standard format."""
 
-    content: list[Any]  # TextBlock, ToolUseBlock 등
+    content: list[Any]  # TextBlock, ToolUseBlock, etc.
     stop_reason: str
     usage: dict[str, int] = field(default_factory=dict)  # input_tokens, output_tokens
 
 
 class BaseProvider(ABC):
-    """LLM 프로바이더 추상 클래스."""
+    """LLM provider abstract class."""
 
     @property
     @abstractmethod
     def name(self) -> str:
-        """프로바이더 이름."""
+        """Provider name."""
         pass
 
     @abstractmethod
@@ -35,24 +35,24 @@ class BaseProvider(ABC):
         max_tokens: int = 16384,
     ) -> ProviderResponse:
         """
-        LLM 호출.
+        Call LLM.
 
         Args:
-            messages: 대화 메시지 리스트
-            system: 시스템 프롬프트
-            tools: 도구 정의 리스트
-            max_tokens: 최대 출력 토큰 수
+            messages: Conversation message list
+            system: System prompt
+            tools: Tool definition list
+            max_tokens: Max output tokens
 
         Returns:
-            ProviderResponse: 표준화된 응답
+            ProviderResponse: Standardized response
         """
         pass
 
     def format_tool(self, tool: "BaseTool") -> dict[str, Any]:
         """
-        도구를 프로바이더 형식으로 변환.
+        Convert tool to provider format.
 
-        기본 구현은 Anthropic 형식을 사용합니다.
-        다른 프로바이더는 필요시 오버라이드하세요.
+        Default implementation uses Anthropic format.
+        Override for other providers if needed.
         """
         return tool.to_anthropic_tool()

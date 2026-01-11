@@ -1,4 +1,4 @@
-"""도구 레지스트리 시스템."""
+"""Tool registry system."""
 
 from typing import Type, TYPE_CHECKING
 
@@ -8,14 +8,14 @@ if TYPE_CHECKING:
 
 class ToolRegistry:
     """
-    도구 등록 및 관리.
+    Tool registration and management.
 
-    싱글톤 패턴을 사용하여 전역 레지스트리 관리.
+    Uses singleton pattern for global registry management.
     """
 
     _tools: dict[str, Type["BaseTool"]] = {}
     _instances: dict[str, "BaseTool"] = {}
-    _instance_kwargs: dict[str, dict] = {}  # 도구별 초기화 인자
+    _instance_kwargs: dict[str, dict] = {}  # Per-tool initialization arguments
 
     @classmethod
     def register(
@@ -24,14 +24,14 @@ class ToolRegistry:
         name: str | None = None,
     ) -> Type["BaseTool"]:
         """
-        도구 클래스 등록.
+        Register a tool class.
 
         Args:
-            tool_class: 등록할 도구 클래스
-            name: 선택적 도구 이름 (없으면 클래스의 name 속성 사용)
+            tool_class: Tool class to register
+            name: Optional tool name (uses class's name attribute if not provided)
 
         Returns:
-            등록된 도구 클래스 (데코레이터 체이닝용)
+            Registered tool class (for decorator chaining)
         """
         tool_name = name or tool_class.name
         if not tool_name:
@@ -43,22 +43,22 @@ class ToolRegistry:
     @classmethod
     def get(cls, name: str, **kwargs) -> "BaseTool":
         """
-        이름으로 도구 인스턴스 조회.
+        Get tool instance by name.
 
         Args:
-            name: 도구 이름
-            **kwargs: 도구 초기화 인자 (TodoTool 등에 필요)
+            name: Tool name
+            **kwargs: Tool initialization arguments (needed for TodoTool, etc.)
 
         Returns:
-            도구 인스턴스
+            Tool instance
         """
         if name not in cls._tools:
             raise KeyError(f"Unknown tool: {name}. Available: {list(cls._tools.keys())}")
 
-        # 캐시 키: 이름 + kwargs 해시
+        # Cache key: name + kwargs hash
         cache_key = name
         if kwargs:
-            # kwargs가 있으면 새 인스턴스 생성 (TodoManager 등)
+            # Create new instance if kwargs provided (e.g., TodoManager)
             return cls._tools[name](**kwargs)
 
         if cache_key not in cls._instances:
@@ -69,13 +69,13 @@ class ToolRegistry:
     @classmethod
     def get_all(cls, **shared_kwargs) -> list["BaseTool"]:
         """
-        모든 등록된 도구 인스턴스 반환.
+        Return all registered tool instances.
 
         Args:
-            **shared_kwargs: 모든 도구에 전달할 공통 인자
+            **shared_kwargs: Common arguments to pass to all tools
 
         Returns:
-            도구 인스턴스 리스트
+            List of tool instances
         """
         tools = []
         for name in cls._tools:
@@ -83,41 +83,41 @@ class ToolRegistry:
                 tool = cls.get(name, **shared_kwargs)
                 tools.append(tool)
             except TypeError:
-                # kwargs가 필요 없는 도구
+                # Tool that doesn't need kwargs
                 tool = cls.get(name)
                 tools.append(tool)
         return tools
 
     @classmethod
     def get_tool_class(cls, name: str) -> Type["BaseTool"]:
-        """도구 클래스 조회 (인스턴스화 없이)."""
+        """Get tool class (without instantiation)."""
         if name not in cls._tools:
             raise KeyError(f"Unknown tool: {name}")
         return cls._tools[name]
 
     @classmethod
     def list_tools(cls) -> list[str]:
-        """등록된 도구 이름 목록 반환."""
+        """Return list of registered tool names."""
         return list(cls._tools.keys())
 
     @classmethod
     def clear(cls) -> None:
-        """레지스트리 초기화 (테스트용)."""
+        """Clear registry (for testing)."""
         cls._tools.clear()
         cls._instances.clear()
         cls._instance_kwargs.clear()
 
     @classmethod
     def is_registered(cls, name: str) -> bool:
-        """도구 등록 여부 확인."""
+        """Check if tool is registered."""
         return name in cls._tools
 
 
 def register_tool(cls: Type["BaseTool"]) -> Type["BaseTool"]:
     """
-    도구 등록 데코레이터.
+    Tool registration decorator.
 
-    사용 예:
+    Usage:
         @register_tool
         class ReadTool(BaseTool):
             name = "read"

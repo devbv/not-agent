@@ -5,7 +5,11 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
+from rich.console import Console
+
 from not_agent.tools import BaseTool, ToolResult, get_all_tools
+
+_console = Console(stderr=True)
 
 if TYPE_CHECKING:
     from .approval import ApprovalManager
@@ -19,23 +23,23 @@ class ToolExecutor:
         self,
         tools: list[BaseTool] | None = None,
         permission_manager: PermissionManager | None = None,
-        approval_manager: ApprovalManager | None = None,  # 하위 호환
+        approval_manager: ApprovalManager | None = None,  # Backward compat
     ) -> None:
         """
         Initialize tool executor.
 
         Args:
             tools: List of tools to make available (defaults to all tools)
-            permission_manager: 규칙 기반 권한 관리자 (권장)
-            approval_manager: 기존 승인 플러그인 (하위 호환용)
+            permission_manager: Rule-based permission manager (recommended)
+            approval_manager: Legacy approval plugin (for backward compatibility)
         """
         self.tools = {tool.name: tool for tool in (tools or get_all_tools())}
 
-        # PermissionManager 우선 사용
+        # Use PermissionManager first
         if permission_manager is not None:
             self.permission = permission_manager
         elif approval_manager is not None:
-            # 기존 ApprovalManager의 내부 PermissionManager 사용
+            # Use internal PermissionManager from legacy ApprovalManager
             self.permission = approval_manager._manager
         else:
             self.permission = None
@@ -60,11 +64,11 @@ class ToolExecutor:
             try:
                 approval_desc = tool.get_approval_description(**tool_input)
 
-                if approval_desc:  # Tool이 승인 필요하다고 함
-                    # context 구성 (도구 입력 전체)
+                if approval_desc:  # Tool requires approval
+                    # Build context (full tool input)
                     context = dict(tool_input)
 
-                    # write 도구의 경우 diff 생성
+                    # Generate diff for write tool
                     diff = None
                     if tool.name == "write" and hasattr(tool, "generate_diff"):
                         diff = tool.generate_diff(
@@ -72,7 +76,7 @@ class ToolExecutor:
                             tool_input.get("content", ""),
                         )
 
-                    # 권한 확인 (자동 승인/거부/질의)
+                    # Check permission (auto approve/deny/prompt)
                     approved = self.permission.check(
                         tool.name, approval_desc, context, diff
                     )
@@ -85,10 +89,10 @@ class ToolExecutor:
                             error=None,
                         )
             except Exception as e:
-                # get_approval_description 실행 실패 시 안전하게 계속 진행
-                print(f"[WARNING] Failed to check permission: {e}")
+                # Safely continue if get_approval_description fails
+                _console.print(f"[yellow][Warning][/yellow] Failed to check permission: {e}")
 
-        # === 실제 도구 실행 ===
+        # === Actual tool execution ===
         try:
             return tool.execute(**tool_input)
         except Exception as e:
@@ -133,10 +137,10 @@ class ToolExecutor:
                 approval_desc = tool.get_approval_description(**tool_input)
 
                 if approval_desc:
-                    # context 구성 (도구 입력 전체)
+                    # Build context (full tool input)
                     context = dict(tool_input)
 
-                    # write 도구의 경우 diff 생성
+                    # Generate diff for write tool
                     diff = None
                     if tool.name == "write" and hasattr(tool, "generate_diff"):
                         diff = tool.generate_diff(
@@ -144,7 +148,7 @@ class ToolExecutor:
                             tool_input.get("content", ""),
                         )
 
-                    # 권한 확인 (자동 승인/거부/질의)
+                    # Check permission (auto approve/deny/prompt)
                     approved = self.permission.check(
                         tool.name, approval_desc, context, diff
                     )
@@ -157,7 +161,7 @@ class ToolExecutor:
                             error=None,
                         )
             except Exception as e:
-                print(f"[WARNING] Failed to check permission: {e}")
+                _console.print(f"[yellow][Warning][/yellow] Failed to check permission: {e}")
 
         # Execute tool
         try:

@@ -17,15 +17,15 @@ class BashTool(BaseTool):
         "Use when: user asks to run a command or execute something in terminal."
     )
 
-    # 위험한 명령어 패턴
+    # Dangerous command patterns
     DANGEROUS_PATTERNS = [
         "rm ",
         "mv ",
         "dd ",
         "format",
-        ">",  # 리다이렉션
-        ">>",  # 추가 리다이렉션
-        "|",  # 파이프 (일부 위험할 수 있음)
+        ">",  # Redirection
+        ">>",  # Append redirection
+        "|",  # Pipe (can be dangerous in some cases)
     ]
 
     @property
@@ -55,13 +55,13 @@ class BashTool(BaseTool):
         cwd: str | None = None,
         **kwargs: Any,
     ) -> str | None:
-        """위험한 명령어만 승인 요청"""
-        # 위험한 패턴 체크
+        """Request approval only for dangerous commands."""
+        # Check for dangerous patterns
         for pattern in self.DANGEROUS_PATTERNS:
             if pattern in command:
                 return f"Run command: {command}"
 
-        # 안전한 명령어는 승인 불필요
+        # Safe commands don't need approval
         return None
 
     def execute(

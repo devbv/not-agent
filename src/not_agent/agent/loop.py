@@ -46,27 +46,27 @@ class AgentLoop:
         executor: ToolExecutor | None = None,
         todo_manager: TodoManager | None = None,
     ) -> None:
-        # Config 설정 (없으면 기본값 생성)
+        # Config setup (create default if not provided)
         self.config = config or Config()
 
         # Event bus (optional)
         self.event_bus = event_bus
 
-        # Provider 설정
+        # Provider setup
         self.provider: BaseProvider = get_provider(
             self.config.get("provider", "claude"),
             self.config
         )
 
-        # 설정값 (Config에서 로드)
+        # Settings (loaded from Config)
         self.max_turns: int = self.config.get("max_turns", 20)
         self.max_output_length: int = self.config.get("max_output_length", 10_000)
         self.debug: bool = self.config.get("debug", False)
 
-        # TodoManager 인스턴스 생성 (세션별 격리)
+        # Create TodoManager instance (isolated per session)
         self.todo_manager = todo_manager or TodoManager()
 
-        # Executor 설정 - TodoManager 주입
+        # Executor setup - inject TodoManager
         if executor:
             self.executor = executor
         else:
@@ -83,12 +83,12 @@ class AgentLoop:
 
         self.system_prompt = self._get_system_prompt()
 
-        # Spinner callbacks (run()에서 설정됨)
+        # Spinner callbacks (set in run())
         self.pause_spinner_callback: Any = None
         self.resume_spinner_callback: Any = None
         self.update_spinner_callback: Any = None
 
-        # 상태 관리
+        # State management
         self.context = LoopContext(max_turns=self.max_turns)
         self._state_change_callbacks: list[Callable[[LoopState, LoopState], None]] = []
 
@@ -124,17 +124,17 @@ class AgentLoop:
     # --- State management ---
 
     def _set_state(self, new_state: LoopState) -> None:
-        """상태 변경 및 콜백 호출."""
+        """Change state and invoke callbacks."""
         old_state = self.context.state
         self.context.record_state(new_state)
 
-        # 이벤트 발행
+        # Emit event
         self._emit(StateChangedEvent(
             old_state=old_state.name,
             new_state=new_state.name,
         ))
 
-        # 콜백 호출 (레거시 호환성)
+        # Invoke callbacks (legacy compatibility)
         for callback in self._state_change_callbacks:
             try:
                 callback(old_state, new_state)
@@ -144,10 +144,10 @@ class AgentLoop:
     def on_state_change(
         self, callback: Callable[[LoopState, LoopState], None]
     ) -> None:
-        """상태 변경 콜백 등록.
+        """Register state change callback.
 
         Args:
-            callback: (old_state, new_state)를 받는 콜백 함수
+            callback: Callback function that receives (old_state, new_state)
         """
         self._state_change_callbacks.append(callback)
 
@@ -156,25 +156,25 @@ class AgentLoop:
         response: Any,
         tool_uses: list[ToolUseBlock],
     ) -> TerminationReason | None:
-        """종료 조건 확인.
+        """Check termination conditions.
 
         Args:
-            response: LLM 응답
-            tool_uses: 추출된 도구 호출 목록
+            response: LLM response
+            tool_uses: Extracted list of tool calls
 
         Returns:
-            종료 사유 또는 None (계속 진행)
+            Termination reason or None (continue)
         """
-        # 도구 호출이 없으면 종료
+        # End if no tool calls
         if not tool_uses:
             return TerminationReason.END_TURN
 
-        # stop_reason 확인
+        # Check stop_reason
         if hasattr(response, 'stop_reason'):
             if response.stop_reason == 'end_turn' and not tool_uses:
                 return TerminationReason.STOP_REASON
 
-        return None  # 계속 진행
+        return None  # Continue
 
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the agent.
@@ -222,17 +222,17 @@ When unsure about requirements, use ask_user."""
         self.resume_spinner_callback = resume_spinner_callback
         self.update_spinner_callback = update_spinner_callback
 
-        # 컨텍스트 초기화
+        # Initialize context
         self.context.reset()
         self.context.max_turns = self.max_turns
         self.context.start_time = time.time()
 
         try:
-            # 입력 수신
+            # Receive input
             self._set_state(LoopState.RECEIVING_INPUT)
             self.session.add_user_message(user_message)
 
-            # 루프 시작 이벤트
+            # Loop started event
             self._emit(LoopStartedEvent(
                 session_id=self.session.id,
                 user_message=user_message[:100],
@@ -241,16 +241,16 @@ When unsure about requirements, use ask_user."""
             for turn in range(self.max_turns):
                 self.context.current_turn = turn + 1
 
-                # 턴 시작 이벤트
+                # Turn started event
                 self._emit(TurnStartedEvent(
                     turn_number=turn + 1,
                     max_turns=self.max_turns,
                 ))
 
-                # LLM 호출
+                # Call LLM
                 self._set_state(LoopState.CALLING_LLM)
 
-                # LLM 요청 이벤트
+                # LLM request event
                 self._emit(LLMRequestEvent(
                     message_count=len(self.session.messages),
                     has_tools=bool(self.executor.get_tool_definitions()),
@@ -261,13 +261,13 @@ When unsure about requirements, use ask_user."""
                 llm_duration_ms = (time.time() - llm_start_time) * 1000
                 self.context.total_llm_calls += 1
 
-                # 응답 분석
+                # Analyze response
                 self._set_state(LoopState.PROCESSING_RESPONSE)
                 tool_uses = [
                     block for block in response.content if isinstance(block, ToolUseBlock)
                 ]
 
-                # LLM 응답 이벤트
+                # LLM response event
                 usage = getattr(response, 'usage', {}) or {}
                 self._emit(LLMResponseEvent(
                     stop_reason=getattr(response, 'stop_reason', ''),
@@ -277,13 +277,13 @@ When unsure about requirements, use ask_user."""
                     duration_ms=llm_duration_ms,
                 ))
 
-                # 종료 조건 확인
+                # Check termination conditions
                 termination = self._check_termination(response, tool_uses)
                 if termination:
                     self.context.termination_reason = termination
                     self._set_state(LoopState.COMPLETED)
 
-                    # 텍스트 응답 추출
+                    # Extract text response
                     text_content = [
                         block.text
                         for block in response.content
@@ -291,7 +291,7 @@ When unsure about requirements, use ask_user."""
                     ]
                     text_response = "\n".join(text_content)
 
-                    # 루프 완료 이벤트
+                    # Loop completed event
                     duration_ms = (time.time() - self.context.start_time) * 1000
                     self._emit(LoopCompletedEvent(
                         session_id=self.session.id,
@@ -301,7 +301,7 @@ When unsure about requirements, use ask_user."""
                     ))
                     return text_response
 
-                # 도구 실행
+                # Execute tools
                 self._set_state(LoopState.EXECUTING_TOOLS)
                 self.session.add_assistant_message(list(response.content))
 
@@ -310,7 +310,7 @@ When unsure about requirements, use ask_user."""
                 for tool_use in tool_uses:
                     tool_input = dict(tool_use.input)
 
-                    # 도구 실행 시작 이벤트
+                    # Tool execution started event
                     self._emit(ToolExecutionStartedEvent(
                         tool_name=tool_use.name,
                         tool_input=tool_input,
@@ -329,7 +329,7 @@ When unsure about requirements, use ask_user."""
                     if tool_use.name == "ask_user" and self.resume_spinner_callback:
                         self.resume_spinner_callback()
 
-                    # 도구 실행 완료 이벤트
+                    # Tool execution completed event
                     self._emit(ToolExecutionCompletedEvent(
                         tool_name=tool_use.name,
                         success=result.success,
@@ -352,21 +352,21 @@ When unsure about requirements, use ask_user."""
 
                 self.session.add_tool_results(tool_results)
 
-                # 턴 완료 이벤트
+                # Turn completed event
                 self._emit(TurnCompletedEvent(
                     turn_number=turn + 1,
                     tool_calls_count=len(tool_uses),
                 ))
 
-                # 컨텍스트 크기 확인
+                # Check context size
                 self._set_state(LoopState.CHECKING_CONTEXT)
                 self._check_context_size()
 
-            # 최대 턴 도달
+            # Max turns reached
             self.context.termination_reason = TerminationReason.MAX_TURNS
             self._set_state(LoopState.COMPLETED)
 
-            # 루프 완료 이벤트 (최대 턴)
+            # Loop completed event (max turns)
             duration_ms = (time.time() - self.context.start_time) * 1000
             self._emit(LoopCompletedEvent(
                 session_id=self.session.id,
@@ -448,8 +448,8 @@ When unsure about requirements, use ask_user."""
                     input_preview = input_str[:150] + "..." if len(input_str) > 150 else input_str
                     self._debug_log(f"  [TOOL_USE] {name}: {input_preview}")
 
-            # ProviderResponse -> anthropic Message 형식으로 변환 (기존 코드 호환)
-            # response.content는 이미 리스트 형태
+            # Convert ProviderResponse to anthropic Message format (legacy code compatibility)
+            # response.content is already in list format
             return type('Message', (), {
                 'content': response.content,
                 'stop_reason': response.stop_reason,

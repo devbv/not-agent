@@ -1,7 +1,7 @@
 """Message parts and type-safe message system.
 
-타입 안전한 메시지 파트 계층 구조를 정의합니다.
-Anthropic API와 호환되면서도 확장 가능한 구조입니다.
+Defines a type-safe message part hierarchy.
+Compatible with Anthropic API while remaining extensible.
 """
 
 from abc import ABC, abstractmethod
@@ -10,37 +10,37 @@ from typing import Literal, Any, TypeVar
 
 
 class MessagePart(ABC):
-    """메시지 파트 추상 기본 클래스.
+    """Abstract base class for message parts.
 
-    모든 메시지 파트는 이 클래스를 상속해야 합니다.
+    All message parts must inherit from this class.
     """
 
     @property
     @abstractmethod
     def part_type(self) -> str:
-        """파트 타입 식별자."""
+        """Part type identifier."""
         pass
 
     @abstractmethod
     def to_api_format(self) -> dict[str, Any]:
-        """Anthropic API 형식으로 변환."""
+        """Convert to Anthropic API format."""
         pass
 
     @abstractmethod
     def to_dict(self) -> dict[str, Any]:
-        """직렬화용 딕셔너리 변환."""
+        """Convert to dictionary for serialization."""
         pass
 
     @classmethod
     @abstractmethod
     def from_dict(cls, data: dict[str, Any]) -> "MessagePart":
-        """딕셔너리에서 복원."""
+        """Restore from dictionary."""
         pass
 
 
 @dataclass
 class TextPart(MessagePart):
-    """텍스트 메시지 파트."""
+    """Text message part."""
 
     text: str
 
@@ -61,9 +61,9 @@ class TextPart(MessagePart):
 
 @dataclass
 class ToolUsePart(MessagePart):
-    """도구 호출 파트.
+    """Tool call part.
 
-    LLM이 도구를 호출할 때 생성됩니다.
+    Generated when LLM calls a tool.
     """
 
     tool_id: str
@@ -101,9 +101,9 @@ class ToolUsePart(MessagePart):
 
 @dataclass
 class ToolResultPart(MessagePart):
-    """도구 실행 결과 파트.
+    """Tool execution result part.
 
-    도구 실행 결과를 담습니다.
+    Contains tool execution results.
     """
 
     tool_use_id: str
@@ -141,7 +141,7 @@ class ToolResultPart(MessagePart):
         )
 
 
-# Part 타입 레지스트리
+# Part type registry
 _PART_TYPES: dict[str, type[MessagePart]] = {
     "text": TextPart,
     "tool_use": ToolUsePart,
@@ -150,26 +150,26 @@ _PART_TYPES: dict[str, type[MessagePart]] = {
 
 
 def register_part_type(part_type: str, cls: type[MessagePart]) -> None:
-    """새 파트 타입 등록.
+    """Register new part type.
 
     Args:
-        part_type: 파트 타입 식별자
-        cls: MessagePart 서브클래스
+        part_type: Part type identifier
+        cls: MessagePart subclass
     """
     _PART_TYPES[part_type] = cls
 
 
 def part_from_dict(data: dict[str, Any]) -> MessagePart:
-    """딕셔너리에서 적절한 Part 인스턴스 생성.
+    """Create appropriate Part instance from dictionary.
 
     Args:
-        data: part_type 키를 포함한 딕셔너리
+        data: Dictionary containing part_type key
 
     Returns:
-        해당 타입의 MessagePart 인스턴스
+        MessagePart instance of the appropriate type
 
     Raises:
-        ValueError: 알 수 없는 part_type
+        ValueError: Unknown part_type
     """
     part_type = data.get("part_type")
     if part_type not in _PART_TYPES:
@@ -178,18 +178,18 @@ def part_from_dict(data: dict[str, Any]) -> MessagePart:
 
 
 def part_from_anthropic(block: Any) -> MessagePart:
-    """Anthropic SDK 블록에서 MessagePart 변환.
+    """Convert Anthropic SDK block to MessagePart.
 
     Args:
-        block: Anthropic SDK 블록 (TextBlock, ToolUseBlock) 또는 dict
+        block: Anthropic SDK block (TextBlock, ToolUseBlock) or dict
 
     Returns:
-        변환된 MessagePart
+        Converted MessagePart
 
     Raises:
-        ValueError: 변환할 수 없는 블록
+        ValueError: Cannot convert block
     """
-    # Anthropic SDK 객체 (TextBlock, ToolUseBlock)
+    # Anthropic SDK objects (TextBlock, ToolUseBlock)
     if hasattr(block, "type"):
         if block.type == "text":
             return TextPart(text=block.text)
@@ -200,7 +200,7 @@ def part_from_anthropic(block: Any) -> MessagePart:
                 tool_input=dict(block.input) if block.input else {},
             )
 
-    # dict 형태 (tool_result 또는 API 형식)
+    # dict format (tool_result or API format)
     if isinstance(block, dict):
         block_type = block.get("type")
         if block_type == "tool_result":
@@ -222,13 +222,13 @@ def part_from_anthropic(block: Any) -> MessagePart:
 
 
 def parts_from_content(content: list[Any] | str) -> list[MessagePart]:
-    """content를 MessagePart 리스트로 변환.
+    """Convert content to MessagePart list.
 
     Args:
-        content: 문자열 또는 블록 리스트
+        content: String or list of blocks
 
     Returns:
-        MessagePart 리스트
+        List of MessageParts
     """
     if isinstance(content, str):
         return [TextPart(text=content)]
@@ -238,6 +238,6 @@ def parts_from_content(content: list[Any] | str) -> list[MessagePart]:
         try:
             parts.append(part_from_anthropic(block))
         except ValueError:
-            # 변환 실패 시 텍스트로 처리
+            # On conversion failure, treat as text
             parts.append(TextPart(text=str(block)))
     return parts

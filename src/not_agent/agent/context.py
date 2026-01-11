@@ -1,4 +1,4 @@
-"""컨텍스트 크기 관리 및 컴팩션."""
+"""Context size management and compaction."""
 
 import re
 from typing import Any, TYPE_CHECKING
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 class ContextManager:
-    """컨텍스트 크기 관리."""
+    """Context size management."""
 
     def __init__(
         self,
@@ -27,14 +27,14 @@ class ContextManager:
         self.preserve_recent_messages = preserve_recent_messages
 
     def estimate_tokens(self, session: "Session") -> int:
-        """세션의 토큰 수 추정."""
+        """Estimate token count of session."""
         text = str(session.to_api_format())
-        # 대략적 추정: 4자당 1토큰
+        # Rough estimate: 1 token per 4 characters
         return len(text) // 4
 
     def should_compact(self, session: "Session") -> bool:
-        """컴팩션 필요 여부 확인."""
-        # 최소 메시지 수 확인
+        """Check if compaction is needed."""
+        # Check minimum message count
         if len(session) <= self.preserve_recent_messages + 2:
             return False
 
@@ -42,11 +42,11 @@ class ContextManager:
         return tokens >= self.limit * self.threshold
 
     def get_usage_ratio(self, session: "Session") -> float:
-        """컨텍스트 사용 비율 반환."""
+        """Return context usage ratio."""
         return self.estimate_tokens(session) / self.limit
 
     def get_usage_info(self, session: "Session") -> dict[str, Any]:
-        """컨텍스트 사용 정보 반환."""
+        """Return context usage info."""
         token_count = self.estimate_tokens(session)
         percentage = (token_count / self.limit) * 100
 
@@ -64,9 +64,9 @@ class ContextManager:
         debug_log: Any = None,
     ) -> None:
         """
-        세션 컴팩션 수행.
+        Perform session compaction.
 
-        오래된 메시지를 AI로 요약하고 새 세션으로 교체.
+        Summarize old messages with AI and replace with new session.
         """
         if debug_log:
             debug_log("[CONTEXT COMPACTION] Starting...")
@@ -79,36 +79,36 @@ class ContextManager:
             debug_log(f"[INFO] Current state: {original_count} messages, {original_tokens:,} tokens")
             debug_log(f"[INFO] Preserving recent {self.preserve_recent_messages} messages")
 
-        # 안전한 분할 지점 찾기
+        # Find safe split point
         preserve_count = self._find_safe_split_point(messages)
 
         if debug_log:
             debug_log(f"[INFO] Safe preserve count: {preserve_count}")
 
-        # 메시지 분할
+        # Split messages
         messages_to_summarize = messages[:-preserve_count]
         recent_messages = messages[-preserve_count:]
 
         if debug_log:
             debug_log(f"[INFO] Summarizing {len(messages_to_summarize)} older messages...")
 
-        # AI로 요약 생성
+        # Generate summary with AI
         summary = self._generate_summary(messages_to_summarize, system_prompt)
 
         if debug_log:
             debug_log(f"[INFO] Summary generated ({len(summary)} characters)")
 
-        # 새 메시지 리스트 구성 (API 형식으로)
+        # Build new message list (in API format)
         summary_message = {
             "role": "user",
             "content": f"[Previous conversation summary]\n\n{summary}"
         }
         new_messages = [summary_message] + [msg.to_api_format() for msg in recent_messages]
 
-        # 세션 업데이트
+        # Update session
         session.set_messages(new_messages)
 
-        # 결과 로깅
+        # Log results
         if debug_log:
             new_count = len(session)
             new_tokens = self.estimate_tokens(session)
@@ -119,13 +119,13 @@ class ContextManager:
             debug_log(f"[SUCCESS] Tokens: {original_tokens:,} → {new_tokens:,} ({reduction:.1f}% reduction)")
 
     def _find_safe_split_point(self, messages: list["Message"]) -> int:
-        """tool_use/tool_result 쌍을 깨지 않는 분할 지점 찾기."""
+        """Find split point that doesn't break tool_use/tool_result pairs."""
         preserve_count = self.preserve_recent_messages
 
         if len(messages) <= preserve_count:
             return len(messages)
 
-        # 첫 번째 보존 메시지가 tool_result를 포함하는지 확인
+        # Check if first preserved message contains tool_result
         first_recent = messages[-preserve_count]
         if first_recent.role == "user":
             has_tool_result = any(
@@ -133,7 +133,7 @@ class ContextManager:
                 for part in first_recent.parts
             )
             if has_tool_result:
-                # tool_use가 있는 이전 메시지도 포함
+                # Also include previous message with tool_use
                 preserve_count += 1
 
         return min(preserve_count, len(messages))
@@ -143,7 +143,7 @@ class ContextManager:
         messages_to_summarize: list["Message"],
         system_prompt: str,
     ) -> str:
-        """AI를 사용하여 메시지 요약 생성."""
+        """Generate message summary using AI."""
         summary_prompt = """You have been assisting the user but the conversation is getting long.
 Create a concise summary that preserves essential information for continuing the work.
 
@@ -173,10 +173,10 @@ Focus on facts, not process. Include specific names (files, variables, etc.).
 Wrap your entire summary in <summary></summary> tags."""
 
         try:
-            # 메시지 정리 (tool content 단순화, 텍스트 유지)
+            # Clean messages (simplify tool content, keep text)
             cleaned_messages = self._clean_messages_for_summary(messages_to_summarize)
 
-            # AI 호출
+            # Call AI
             response = self.provider.chat(
                 messages=cleaned_messages + [
                     {"role": "user", "content": summary_prompt}
@@ -185,12 +185,12 @@ Wrap your entire summary in <summary></summary> tags."""
                 max_tokens=8 * 1024,
             )
 
-            # 응답에서 텍스트 추출
+            # Extract text from response
             text = "".join(
                 block.text for block in response.content if hasattr(block, "text")
             )
 
-            # <summary> 태그 추출
+            # Extract <summary> tag
             match = re.search(r"<summary>(.*?)</summary>", text, re.DOTALL)
             if match:
                 return match.group(1).strip()
@@ -198,14 +198,14 @@ Wrap your entire summary in <summary></summary> tags."""
                 return text.strip()
 
         except Exception as e:
-            # 폴백: 간단한 메시지
+            # Fallback: simple message
             return f"Previous conversation covered multiple topics. (Error: {e})"
 
     def _clean_messages_for_summary(
         self,
         messages: list["Message"],
     ) -> list[dict[str, Any]]:
-        """요약용으로 메시지 정리 (tool 관련 콘텐츠 단순화)."""
+        """Clean messages for summary (simplify tool-related content)."""
         cleaned = []
 
         for msg in messages:

@@ -59,7 +59,7 @@ def get_all_tools(todo_manager: TodoManager | None = None) -> list[BaseTool]:
     # Get all registered tools from registry
     tools = [ToolRegistry.get(name) for name in ToolRegistry.list_tools()]
 
-    # Todo 도구는 manager가 있을 때만 추가 (의존성 주입 필요)
+    # Todo tools are added only when manager is provided (requires dependency injection)
     if todo_manager is not None:
         tools.extend([
             TodoWriteTool(todo_manager),

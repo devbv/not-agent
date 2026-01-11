@@ -1,6 +1,6 @@
-"""세션 및 메시지 관리.
+"""Session and message management.
 
-타입 안전한 메시지 시스템을 사용하는 세션 관리 모듈입니다.
+Session management module using type-safe message system.
 """
 
 from dataclasses import dataclass, field
@@ -20,45 +20,45 @@ from .message import (
 
 @dataclass
 class Message:
-    """타입 안전한 대화 메시지.
+    """Type-safe conversation message.
 
-    모든 메시지 내용은 MessagePart로 구성됩니다.
+    All message content consists of MessageParts.
     """
 
     role: Literal["user", "assistant"]
     parts: list[MessagePart] = field(default_factory=list)
 
     def add_part(self, part: MessagePart) -> None:
-        """파트 추가."""
+        """Add a part."""
         self.parts.append(part)
 
     def get_parts_by_type(self, part_type: type[MessagePart]) -> list[MessagePart]:
-        """특정 타입의 파트만 반환.
+        """Return only parts of a specific type.
 
         Args:
-            part_type: 필터링할 파트 타입
+            part_type: Part type to filter by
 
         Returns:
-            해당 타입의 파트 리스트
+            List of parts of the specified type
         """
         return [p for p in self.parts if isinstance(p, part_type)]
 
     def get_text_content(self) -> str:
-        """모든 텍스트 파트를 합쳐서 반환."""
+        """Join and return all text parts."""
         text_parts = self.get_parts_by_type(TextPart)
         return "\n".join(p.text for p in text_parts)  # type: ignore
 
     def get_tool_uses(self) -> list[ToolUsePart]:
-        """모든 도구 호출 파트 반환."""
+        """Return all tool call parts."""
         return [p for p in self.parts if isinstance(p, ToolUsePart)]
 
     def to_api_format(self) -> dict[str, Any]:
-        """Anthropic API 형식으로 변환."""
+        """Convert to Anthropic API format."""
         content = [part.to_api_format() for part in self.parts]
         return {"role": self.role, "content": content}
 
     def to_dict(self) -> dict[str, Any]:
-        """직렬화용 딕셔너리."""
+        """Convert to dictionary for serialization."""
         return {
             "role": self.role,
             "parts": [part.to_dict() for part in self.parts],
@@ -66,38 +66,38 @@ class Message:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Message":
-        """딕셔너리에서 복원."""
+        """Restore from dictionary."""
         parts = [part_from_dict(p) for p in data["parts"]]
         return cls(role=data["role"], parts=parts)
 
     @classmethod
     def from_anthropic_response(cls, role: str, content: list[Any]) -> "Message":
-        """Anthropic 응답에서 Message 생성."""
+        """Create Message from Anthropic response."""
         parts = [part_from_anthropic(block) for block in content]
         return cls(role=role, parts=parts)  # type: ignore
 
-    # 하위 호환성: content 프로퍼티
+    # Backward compatibility: content property
     @property
     def content(self) -> list[Any]:
-        """Legacy: API 형식의 content 반환."""
+        """Legacy: Return content in API format."""
         return [part.to_api_format() for part in self.parts]
 
 
 class Session:
-    """타입 안전한 대화 세션 관리."""
+    """Type-safe conversation session management."""
 
     def __init__(self) -> None:
         self.id: str = str(uuid4())
         self.messages: list[Message] = []
 
     def add_user_message(self, content: str | list[MessagePart]) -> Message:
-        """사용자 메시지 추가.
+        """Add user message.
 
         Args:
-            content: 문자열 또는 MessagePart 리스트
+            content: String or list of MessageParts
 
         Returns:
-            추가된 Message
+            Added Message
         """
         if isinstance(content, str):
             parts = [TextPart(text=content)]
@@ -109,13 +109,13 @@ class Session:
         return msg
 
     def add_assistant_message(self, content: list[Any]) -> Message:
-        """어시스턴트 메시지 추가 (Anthropic 응답에서).
+        """Add assistant message (from Anthropic response).
 
         Args:
-            content: Anthropic API 응답의 content 블록 리스트
+            content: Content block list from Anthropic API response
 
         Returns:
-            추가된 Message
+            Added Message
         """
         parts = [part_from_anthropic(block) for block in content]
         msg = Message(role="assistant", parts=parts)
@@ -123,13 +123,13 @@ class Session:
         return msg
 
     def add_tool_results(self, results: list[dict[str, Any]]) -> Message:
-        """도구 결과를 사용자 메시지로 추가.
+        """Add tool results as user message.
 
         Args:
-            results: tool_result 딕셔너리 리스트
+            results: List of tool_result dictionaries
 
         Returns:
-            추가된 Message
+            Added Message
         """
         parts: list[MessagePart] = []
         for result in results:
@@ -146,11 +146,11 @@ class Session:
         return msg
 
     def to_api_format(self) -> list[dict[str, Any]]:
-        """API 호출용 형식으로 변환."""
+        """Convert to API call format."""
         return [msg.to_api_format() for msg in self.messages]
 
     def to_dict(self) -> dict[str, Any]:
-        """직렬화용 딕셔너리."""
+        """Convert to dictionary for serialization."""
         return {
             "id": self.id,
             "messages": [msg.to_dict() for msg in self.messages],
@@ -158,45 +158,45 @@ class Session:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Session":
-        """딕셔너리에서 복원."""
+        """Restore from dictionary."""
         session = cls()
         session.id = data["id"]
         session.messages = [Message.from_dict(m) for m in data["messages"]]
         return session
 
-    # 하위 호환성 메서드들
+    # Backward compatibility methods
 
     def get_messages(self) -> list[dict[str, Any]]:
-        """Legacy: to_api_format 별칭."""
+        """Legacy: Alias for to_api_format."""
         return self.to_api_format()
 
     def set_messages(self, messages: list[dict[str, Any]]) -> None:
-        """Legacy: API 형식에서 메시지 설정 (컴팩션 후 등).
+        """Legacy: Set messages from API format (after compaction, etc.).
 
         Args:
-            messages: Anthropic API 형식의 메시지 리스트
+            messages: List of messages in Anthropic API format
         """
         self.messages = []
         for msg_dict in messages:
             role = msg_dict["role"]
             content = msg_dict["content"]
 
-            # 문자열인 경우
+            # If string
             if isinstance(content, str):
                 self.messages.append(
                     Message(role=role, parts=[TextPart(text=content)])  # type: ignore
                 )
                 continue
 
-            # 리스트인 경우
+            # If list
             parts = parts_from_content(content)
             self.messages.append(Message(role=role, parts=parts))  # type: ignore
 
     def clear(self) -> None:
-        """세션 초기화."""
+        """Clear session."""
         self.messages.clear()
         self.id = str(uuid4())
 
     def __len__(self) -> int:
-        """메시지 수 반환."""
+        """Return message count."""
         return len(self.messages)

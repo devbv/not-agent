@@ -9,30 +9,30 @@ from .base import BaseTool, ToolResult
 class TodoItem:
     """A single todo item."""
 
-    content: str  # 작업 내용 (예: "Run the build")
+    content: str  # Task content (e.g., "Run the build")
     status: str  # pending | in_progress | completed
 
 
 class TodoManager:
-    """인스턴스 기반 Todo 상태 관리 - AgentLoop에 주입."""
+    """Instance-based todo state management - injected into AgentLoop."""
 
     def __init__(self) -> None:
         self._todos: list[dict] = []
 
     def get_todos(self) -> list[dict]:
-        """현재 Todo 목록 반환."""
+        """Return current todo list."""
         return self._todos.copy()
 
     def set_todos(self, todos: list[dict]) -> None:
-        """Todo 목록 전체 교체."""
+        """Replace entire todo list."""
         self._todos = [todo.copy() for todo in todos]
 
     def clear(self) -> None:
-        """Todo 목록 초기화."""
+        """Clear todo list."""
         self._todos = []
 
     def get_summary(self) -> dict:
-        """CLI 표시용 요약 정보."""
+        """Get summary for CLI display."""
         total = len(self._todos)
         completed = sum(1 for t in self._todos if t.get("status") == "completed")
         in_progress = sum(1 for t in self._todos if t.get("status") == "in_progress")
@@ -44,7 +44,7 @@ class TodoManager:
         }
 
     def get_current_task(self) -> str | None:
-        """현재 진행 중인 작업 (CLI 상태바용)."""
+        """Get current in-progress task (for CLI status bar)."""
         for t in self._todos:
             if t.get("status") == "in_progress":
                 return t.get("content")
@@ -52,7 +52,7 @@ class TodoManager:
 
 
 class TodoWriteTool(BaseTool):
-    """Todo 목록 업데이트 도구 - 전체 목록을 덮어씁니다."""
+    """Todo list update tool - replaces entire list."""
 
     @property
     def name(self) -> str:
@@ -93,7 +93,7 @@ Example:
 
     @property
     def parameters(self) -> dict:
-        # 이 프로젝트의 간단한 형식 사용 (to_anthropic_tool 오버라이드로 처리)
+        # Uses project's simple format (handled by to_anthropic_tool override)
         return {
             "todos": {
                 "type": "array",
@@ -120,12 +120,12 @@ Example:
                             "properties": {
                                 "content": {
                                     "type": "string",
-                                    "description": "작업 내용 (예: 'Run the build')",
+                                    "description": "Task content (e.g., 'Run the build')",
                                 },
                                 "status": {
                                     "type": "string",
                                     "enum": ["pending", "in_progress", "completed"],
-                                    "description": "작업 상태",
+                                    "description": "Task status",
                                 },
                             },
                             "required": ["content", "status"],
@@ -138,7 +138,7 @@ Example:
         }
 
     def execute(self, **kwargs) -> ToolResult:
-        """Todo 목록 업데이트."""
+        """Update todo list."""
         todos = kwargs.get("todos", [])
 
         if not isinstance(todos, list):
@@ -191,7 +191,7 @@ Example:
 
 
 class TodoReadTool(BaseTool):
-    """Todo 목록 조회 도구."""
+    """Todo list read tool."""
 
     @property
     def name(self) -> str:
@@ -206,13 +206,13 @@ Useful when you need to check current progress or after context compaction."""
 
     @property
     def parameters(self) -> dict:
-        return {}  # 파라미터 없음
+        return {}  # No parameters
 
     def __init__(self, todo_manager: TodoManager) -> None:
         self.todo_manager = todo_manager
 
     def execute(self, **kwargs) -> ToolResult:
-        """현재 Todo 목록 반환."""
+        """Return current todo list."""
         todos = self.todo_manager.get_todos()
 
         if not todos:

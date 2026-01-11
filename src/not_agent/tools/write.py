@@ -37,25 +37,25 @@ class WriteTool(BaseTool):
         }
 
     def generate_diff(self, file_path: str, new_content: str) -> str | None:
-        """기존 파일과 새 콘텐츠 비교 diff 생성
+        """Generate diff comparing existing file with new content.
 
         Args:
-            file_path: 대상 파일 경로
-            new_content: 새로운 파일 내용
+            file_path: Target file path
+            new_content: New file content
 
         Returns:
-            diff 문자열 (기존 파일이 있을 경우) 또는 None (새 파일)
+            Diff string (if file exists) or None (new file)
         """
         path = Path(file_path)
         if not path.exists():
-            return None  # 새 파일은 diff 없음
+            return None  # No diff for new files
 
         try:
             old_content = path.read_text(encoding="utf-8")
         except Exception:
-            return None  # 읽기 실패 시 diff 생략
+            return None  # Skip diff on read failure
 
-        # unified diff 생성
+        # Generate unified diff
         diff_lines = list(difflib.unified_diff(
             old_content.splitlines(keepends=True),
             new_content.splitlines(keepends=True),
@@ -64,12 +64,12 @@ class WriteTool(BaseTool):
         ))
 
         if not diff_lines:
-            return None  # 변경사항 없음
+            return None  # No changes
 
         return "".join(diff_lines)
 
     def get_approval_description(self, file_path: str, content: str, **kwargs: Any) -> str:
-        """WriteTool은 항상 승인 필요 - diff 포함"""
+        """WriteTool always requires approval - includes diff."""
         lines = len(content.split("\n"))
         path = Path(file_path)
         exists = path.exists()
