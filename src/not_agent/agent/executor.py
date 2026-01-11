@@ -1,30 +1,44 @@
 """Tool executor - Handles tool calls from LLM."""
 
+from __future__ import annotations
+
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from not_agent.tools import BaseTool, ToolResult, get_all_tools
 
-from .approval import ApprovalManager
+if TYPE_CHECKING:
+    from .approval import ApprovalManager
+    from .permissions import PermissionManager
 
 
 class ToolExecutor:
-    """Executes tools based on LLM requests with optional approval plugin."""
+    """Executes tools based on LLM requests with optional permission management."""
 
     def __init__(
         self,
         tools: list[BaseTool] | None = None,
-        approval_manager: ApprovalManager | None = None,
+        permission_manager: PermissionManager | None = None,
+        approval_manager: ApprovalManager | None = None,  # 하위 호환
     ) -> None:
         """
         Initialize tool executor.
 
         Args:
             tools: List of tools to make available (defaults to all tools)
-            approval_manager: Optional approval plugin for file modifications
+            permission_manager: 규칙 기반 권한 관리자 (권장)
+            approval_manager: 기존 승인 플러그인 (하위 호환용)
         """
         self.tools = {tool.name: tool for tool in (tools or get_all_tools())}
-        self.approval = approval_manager
+
+        # PermissionManager 우선 사용
+        if permission_manager is not None:
+            self.permission = permission_manager
+        elif approval_manager is not None:
+            # 기존 ApprovalManager의 내부 PermissionManager 사용
+            self.permission = approval_manager._manager
+        else:
+            self.permission = None
 
     def get_tool_definitions(self) -> list[dict[str, Any]]:
         """Get tool definitions for Anthropic API."""
@@ -41,12 +55,15 @@ class ToolExecutor:
 
         tool = self.tools[tool_name]
 
-        # === Plugin Hook: Approval ===
-        if self.approval and self.approval.enabled:
+        # === Plugin Hook: Permission Check ===
+        if self.permission and self.permission.enabled:
             try:
                 approval_desc = tool.get_approval_description(**tool_input)
 
                 if approval_desc:  # Tool이 승인 필요하다고 함
+                    # context 구성 (도구 입력 전체)
+                    context = dict(tool_input)
+
                     # write 도구의 경우 diff 생성
                     diff = None
                     if tool.name == "write" and hasattr(tool, "generate_diff"):
@@ -55,7 +72,10 @@ class ToolExecutor:
                             tool_input.get("content", ""),
                         )
 
-                    approved = self.approval.request(tool.name, approval_desc, diff=diff)
+                    # 권한 확인 (자동 승인/거부/질의)
+                    approved = self.permission.check(
+                        tool.name, approval_desc, context, diff
+                    )
 
                     if not approved:
                         return ToolResult(
@@ -66,7 +86,7 @@ class ToolExecutor:
                         )
             except Exception as e:
                 # get_approval_description 실행 실패 시 안전하게 계속 진행
-                print(f"[WARNING] Failed to check approval: {e}")
+                print(f"[WARNING] Failed to check permission: {e}")
 
         # === 실제 도구 실행 ===
         try:
@@ -107,12 +127,15 @@ class ToolExecutor:
 
         tool = self.tools[tool_name]
 
-        # Plugin Hook: Approval (sync version)
-        if self.approval and self.approval.enabled:
+        # Plugin Hook: Permission Check (sync version)
+        if self.permission and self.permission.enabled:
             try:
                 approval_desc = tool.get_approval_description(**tool_input)
 
                 if approval_desc:
+                    # context 구성 (도구 입력 전체)
+                    context = dict(tool_input)
+
                     # write 도구의 경우 diff 생성
                     diff = None
                     if tool.name == "write" and hasattr(tool, "generate_diff"):
@@ -121,7 +144,10 @@ class ToolExecutor:
                             tool_input.get("content", ""),
                         )
 
-                    approved = self.approval.request(tool.name, approval_desc, diff=diff)
+                    # 권한 확인 (자동 승인/거부/질의)
+                    approved = self.permission.check(
+                        tool.name, approval_desc, context, diff
+                    )
 
                     if not approved:
                         return ToolResult(
@@ -131,7 +157,7 @@ class ToolExecutor:
                             error=None,
                         )
             except Exception as e:
-                print(f"[WARNING] Failed to check approval: {e}")
+                print(f"[WARNING] Failed to check permission: {e}")
 
         # Execute tool
         try:

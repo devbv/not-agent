@@ -14,6 +14,11 @@ from .message import (
     part_from_anthropic,
     register_part_type,
 )
+from .permissions import (
+    Permission,
+    PermissionRule,
+    PermissionManager,
+)
 
 __all__ = [
     "ToolExecutor",
@@ -32,4 +37,8 @@ __all__ = [
     "part_from_dict",
     "part_from_anthropic",
     "register_part_type",
+    # Permissions
+    "Permission",
+    "PermissionRule",
+    "PermissionManager",
 ]
