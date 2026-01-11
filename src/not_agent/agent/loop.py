@@ -1,6 +1,7 @@
 """Agent loop - Main agent execution loop."""
 
-from typing import Any, TYPE_CHECKING
+import time
+from typing import Any, Callable, TYPE_CHECKING
 
 from anthropic import RateLimitError, APIError
 from anthropic.types import Message, ToolUseBlock, TextBlock
@@ -12,6 +13,7 @@ from not_agent.tools import ToolResult, TodoManager, get_all_tools
 from .executor import ToolExecutor
 from .session import Session
 from .context import ContextManager
+from .states import LoopState, TerminationReason, LoopContext
 
 if TYPE_CHECKING:
     pass
@@ -95,6 +97,10 @@ class AgentLoop:
         self.resume_spinner_callback: Any = None
         self.update_spinner_callback: Any = None
 
+        # 상태 관리
+        self.context = LoopContext(max_turns=self.max_turns)
+        self._state_change_callbacks: list[Callable[[LoopState, LoopState], None]] = []
+
     # --- Legacy compatibility properties ---
     @property
     def messages(self) -> list[dict[str, Any]]:
@@ -125,6 +131,57 @@ class AgentLoop:
         """Print debug message in dim style if debug mode is enabled."""
         if self.debug:
             _debug_console.print(f"[dim]{message}[/dim]")
+
+    # --- State management ---
+
+    def _set_state(self, new_state: LoopState) -> None:
+        """상태 변경 및 콜백 호출."""
+        old_state = self.context.state
+        self.context.record_state(new_state)
+
+        self._debug_log(f"[STATE] {old_state.name} -> {new_state.name}")
+
+        # 콜백 호출 (이벤트 시스템 연동 포인트)
+        for callback in self._state_change_callbacks:
+            try:
+                callback(old_state, new_state)
+            except Exception as e:
+                self._debug_log(f"[STATE] Callback error: {e}")
+
+    def on_state_change(
+        self, callback: Callable[[LoopState, LoopState], None]
+    ) -> None:
+        """상태 변경 콜백 등록.
+
+        Args:
+            callback: (old_state, new_state)를 받는 콜백 함수
+        """
+        self._state_change_callbacks.append(callback)
+
+    def _check_termination(
+        self,
+        response: Any,
+        tool_uses: list[ToolUseBlock],
+    ) -> TerminationReason | None:
+        """종료 조건 확인.
+
+        Args:
+            response: LLM 응답
+            tool_uses: 추출된 도구 호출 목록
+
+        Returns:
+            종료 사유 또는 None (계속 진행)
+        """
+        # 도구 호출이 없으면 종료
+        if not tool_uses:
+            return TerminationReason.END_TURN
+
+        # stop_reason 확인
+        if hasattr(response, 'stop_reason'):
+            if response.stop_reason == 'end_turn' and not tool_uses:
+                return TerminationReason.STOP_REASON
+
+        return None  # 계속 진행
 
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the agent."""
@@ -201,101 +258,149 @@ Mark tasks as completed IMMEDIATELY after finishing (don't batch).
             pause_spinner_callback: Optional callback to pause spinner during user input
             resume_spinner_callback: Optional callback to resume spinner after user input
             update_spinner_callback: Optional callback to update spinner with new todo status
+
+        Returns:
+            Agent's text response
+
+        Note:
+            After run() completes, check self.context for execution statistics:
+            - context.termination_reason: Why the loop ended
+            - context.total_llm_calls: Number of LLM API calls
+            - context.total_tool_calls: Number of tool executions
+            - context.duration_ms(): Total execution time in milliseconds
         """
         self.pause_spinner_callback = pause_spinner_callback
         self.resume_spinner_callback = resume_spinner_callback
         self.update_spinner_callback = update_spinner_callback
 
-        # Add user message to session
-        self.session.add_user_message(user_message)
+        # 컨텍스트 초기화
+        self.context.reset()
+        self.context.max_turns = self.max_turns
+        self.context.start_time = time.time()
 
-        self._debug_log(f"\n{'='*60}")
-        self._debug_log(f"[AGENT LOOP] Starting with user message: {user_message[:100]}...")
-        self._debug_log(f"{'='*60}\n")
+        try:
+            # 입력 수신
+            self._set_state(LoopState.RECEIVING_INPUT)
+            self.session.add_user_message(user_message)
 
-        for turn in range(self.max_turns):
-            self._debug_log(f"\n{'─'*60}")
-            self._debug_log(f"[TURN {turn + 1}/{self.max_turns}]")
-            self._debug_log(f"{'─'*60}")
+            self._debug_log(f"\n{'='*60}")
+            self._debug_log(f"[AGENT LOOP] Starting with user message: {user_message[:100]}...")
+            self._debug_log(f"{'='*60}\n")
 
-            # LLM 호출
-            response = self._call_llm()
+            for turn in range(self.max_turns):
+                self.context.current_turn = turn + 1
 
-            # Check if there are tool calls
-            tool_uses = [
-                block for block in response.content if isinstance(block, ToolUseBlock)
-            ]
+                self._debug_log(f"\n{'─'*60}")
+                self._debug_log(f"[TURN {turn + 1}/{self.max_turns}]")
+                self._debug_log(f"{'─'*60}")
 
-            if not tool_uses:
-                # No tool calls - return text response
-                text_content = [
-                    block.text
-                    for block in response.content
-                    if isinstance(block, TextBlock)
+                # LLM 호출
+                self._set_state(LoopState.CALLING_LLM)
+                response = self._call_llm()
+                self.context.total_llm_calls += 1
+
+                # 응답 분석
+                self._set_state(LoopState.PROCESSING_RESPONSE)
+                tool_uses = [
+                    block for block in response.content if isinstance(block, ToolUseBlock)
                 ]
-                text_response = "\n".join(text_content)
-                self._debug_log(f"\n[COMPLETE] No tool calls, returning text response")
-                return text_response
 
-            # Process tool calls
-            self.session.add_assistant_message(list(response.content))
+                # 종료 조건 확인
+                termination = self._check_termination(response, tool_uses)
+                if termination:
+                    self.context.termination_reason = termination
+                    self._set_state(LoopState.COMPLETED)
 
-            self._debug_log(f"\n[TOOL EXECUTION] Executing {len(tool_uses)} tool(s)...")
+                    # 텍스트 응답 추출
+                    text_content = [
+                        block.text
+                        for block in response.content
+                        if isinstance(block, TextBlock)
+                    ]
+                    text_response = "\n".join(text_content)
+                    self._debug_log(f"\n[COMPLETE] {termination.name}")
+                    return text_response
 
-            tool_results = []
+                # 도구 실행
+                self._set_state(LoopState.EXECUTING_TOOLS)
+                self.session.add_assistant_message(list(response.content))
 
-            for idx, tool_use in enumerate(tool_uses):
-                self._debug_log(f"\n  Tool {idx + 1}: {tool_use.name}")
+                self._debug_log(f"\n[TOOL EXECUTION] Executing {len(tool_uses)} tool(s)...")
 
-                tool_input = dict(tool_use.input)
+                tool_results = []
 
-                # Show input for debugging
-                input_str = str(tool_input)
-                if len(input_str) > 150:
-                    self._debug_log(f"    Input: {input_str[:150]}...")
-                else:
-                    self._debug_log(f"    Input: {input_str}")
+                for idx, tool_use in enumerate(tool_uses):
+                    self._debug_log(f"\n  Tool {idx + 1}: {tool_use.name}")
 
-                # Pause spinner for AskUserQuestion to allow clean user input
-                if tool_use.name == "AskUserQuestion" and self.pause_spinner_callback:
-                    self.pause_spinner_callback()
+                    tool_input = dict(tool_use.input)
 
-                result = self.executor.execute(tool_use.name, tool_input)
+                    # Show input for debugging
+                    input_str = str(tool_input)
+                    if len(input_str) > 150:
+                        self._debug_log(f"    Input: {input_str[:150]}...")
+                    else:
+                        self._debug_log(f"    Input: {input_str}")
 
-                # Resume spinner after AskUserQuestion
-                if tool_use.name == "AskUserQuestion" and self.resume_spinner_callback:
-                    self.resume_spinner_callback()
+                    # Pause spinner for AskUserQuestion to allow clean user input
+                    if tool_use.name == "AskUserQuestion" and self.pause_spinner_callback:
+                        self.pause_spinner_callback()
 
-                self._debug_log(f"    Success: {result.success}")
-                if result.success:
-                    output_preview = result.output[:200] if result.output else "(empty)"
-                    self._debug_log(f"    Output: {output_preview}...")
-                else:
-                    self._debug_log(f"    Error: {result.error}")
+                    result = self.executor.execute(tool_use.name, tool_input)
+                    self.context.total_tool_calls += 1
 
-                # Update spinner with new todo status (live display)
-                if tool_use.name == "TodoWrite" and result.success:
-                    if self.update_spinner_callback:
-                        self.update_spinner_callback()
+                    # Resume spinner after AskUserQuestion
+                    if tool_use.name == "AskUserQuestion" and self.resume_spinner_callback:
+                        self.resume_spinner_callback()
 
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tool_use.id,
-                        "content": self._format_tool_result(result),
-                    }
-                )
+                    self._debug_log(f"    Success: {result.success}")
+                    if result.success:
+                        output_preview = result.output[:200] if result.output else "(empty)"
+                        self._debug_log(f"    Output: {output_preview}...")
+                    else:
+                        self._debug_log(f"    Error: {result.error}")
 
-            self.session.add_tool_results(tool_results)
-            self._debug_log(f"\n[FEEDBACK] Tool results added to conversation")
+                    # Update spinner with new todo status (live display)
+                    if tool_use.name == "TodoWrite" and result.success:
+                        if self.update_spinner_callback:
+                            self.update_spinner_callback()
 
-            # Check context size after each turn
-            self._check_context_size()
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_use.id,
+                            "content": self._format_tool_result(result),
+                        }
+                    )
 
-        self._debug_log(f"\n{'='*60}")
-        self._debug_log(f"[MAX TURNS] Reached maximum turns ({self.max_turns})")
-        self._debug_log(f"{'='*60}\n")
-        return "Max turns reached. Please continue with a new message."
+                self.session.add_tool_results(tool_results)
+                self._debug_log(f"\n[FEEDBACK] Tool results added to conversation")
+
+                # 컨텍스트 크기 확인
+                self._set_state(LoopState.CHECKING_CONTEXT)
+                self._check_context_size()
+
+            # 최대 턴 도달
+            self.context.termination_reason = TerminationReason.MAX_TURNS
+            self._set_state(LoopState.COMPLETED)
+
+            self._debug_log(f"\n{'='*60}")
+            self._debug_log(f"[MAX TURNS] Reached maximum turns ({self.max_turns})")
+            self._debug_log(f"{'='*60}\n")
+            return "Max turns reached. Please continue with a new message."
+
+        except KeyboardInterrupt:
+            self.context.termination_reason = TerminationReason.USER_INTERRUPT
+            self._set_state(LoopState.ERROR)
+            return "Interrupted by user."
+
+        except Exception as e:
+            self.context.last_error = e
+            self.context.termination_reason = TerminationReason.ERROR
+            self._set_state(LoopState.ERROR)
+            raise
+
+        finally:
+            self.context.end_time = time.time()
 
     def _call_llm(self) -> Message:
         """Call the LLM with current messages."""
