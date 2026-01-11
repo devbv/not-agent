@@ -4,6 +4,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .base import BaseTool, ToolResult
+from .registry import register_tool
 
 try:
     import requests
@@ -14,16 +15,12 @@ except ImportError:
     HAS_WEB_DEPS = False
 
 
+@register_tool
 class WebFetchTool(BaseTool):
     """Tool for fetching content from URLs and converting HTML to plain text."""
 
-    @property
-    def name(self) -> str:
-        return "WebFetch"
-
-    @property
-    def description(self) -> str:
-        return """Fetches content from a specified URL and converts HTML to plain text.
+    name = "WebFetch"
+    description = """Fetches content from a specified URL and converts HTML to plain text.
 Takes a URL as input and returns the text content with HTML tags removed.
 
 Usage notes:

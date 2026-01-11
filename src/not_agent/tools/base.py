@@ -15,19 +15,19 @@ class ToolResult:
 
 
 class BaseTool(ABC):
-    """Abstract base class for all tools."""
+    """
+    Abstract base class for all tools.
 
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """Tool name used in function calls."""
-        pass
+    서브클래스에서 클래스 변수로 정의:
+        name: str - 도구 이름 (API 호출시 사용)
+        description: str - 도구 설명
 
-    @property
-    @abstractmethod
-    def description(self) -> str:
-        """Description of what the tool does."""
-        pass
+    또는 property로 정의할 수도 있음 (하위 호환성).
+    """
+
+    # 서브클래스에서 클래스 변수로 정의
+    name: str = ""
+    description: str = ""
 
     @property
     @abstractmethod

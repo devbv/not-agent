@@ -4,6 +4,7 @@ from typing import Any
 from urllib.parse import quote_plus
 
 from .base import BaseTool, ToolResult
+from .registry import register_tool
 
 try:
     import requests
@@ -14,16 +15,12 @@ except ImportError:
     HAS_WEB_DEPS = False
 
 
+@register_tool
 class WebSearchTool(BaseTool):
     """Tool for searching the web using Google search scraping."""
 
-    @property
-    def name(self) -> str:
-        return "WebSearch"
-
-    @property
-    def description(self) -> str:
-        return """Search the web using Google and return search results.
+    name = "WebSearch"
+    description = """Search the web using Google and return search results.
 Provides up-to-date information for current events and recent data.
 Returns search result information with titles, URLs, and snippets.
 

@@ -8,13 +8,15 @@
 not-agent/
 ├── CLAUDE.md           # 이 파일 (프로젝트 컨텍스트)
 ├── history/            # 개발 히스토리 및 의사결정 기록
-├── src/                # 소스 코드 (예정)
+├── src/not_agent/      # 소스 코드
+│   ├── config/         # [신규] 설정 시스템
+│   ├── provider/       # [신규] LLM 프로바이더 추상화
 │   ├── agent/          # 에이전트 코어 로직
-│   ├── tools/          # 도구 구현
+│   ├── tools/          # 도구 구현 (레지스트리 기반)
 │   ├── cli/            # CLI 인터페이스
-│   └── llm/            # LLM 통합
-├── tests/              # 테스트 코드 (예정)
-└── docs/               # 문서 (예정)
+│   └── llm/            # [deprecated] → provider/
+├── tests/              # 테스트 코드
+└── docs/               # 문서
 ```
 
 ## 핵심 목표
@@ -36,6 +38,26 @@ not-agent/
 - **테스트**: pytest
 - **타입체크/린팅**: mypy, ruff, black
 
+## 아키텍처 (Phase 4.1)
+
+### 설정 시스템 (config/)
+- `Config` 클래스: 계층적 설정 로더
+- 우선순위: CLI > 환경변수 > 프로젝트 설정 > 글로벌 설정 > 기본값
+- 환경변수: `NOT_AGENT_*` 형식
+
+### 프로바이더 시스템 (provider/)
+- `BaseProvider`: LLM 프로바이더 추상 인터페이스
+- `ClaudeProvider`: Anthropic Claude API 구현
+- `get_provider()`: 이름으로 프로바이더 생성
+
+### 도구 레지스트리 (tools/)
+- `@register_tool` 데코레이터로 자동 등록
+- `ToolRegistry.get_all()`: 모든 도구 인스턴스 반환
+
+### 세션/컨텍스트 (agent/)
+- `Session`: 대화 메시지 관리
+- `ContextManager`: 토큰 추정 및 자동 컴팩션
+
 ## 현재 상태
 - [x] 프로젝트 개요 정의
 - [x] 개발 계획 수립
@@ -43,7 +65,8 @@ not-agent/
 - [x] Phase 1 완료 (기초 인프라)
 - [x] Phase 2 완료 (핵심 도구 구현)
 - [x] Phase 3 완료 (에이전트 루프 개선)
-- [ ] Phase 4 시작 (코드 생성 및 테스트)
+- [x] Phase 4.1 완료 (구조 리팩토링)
+- [ ] Phase 4.2 (코드 생성 및 테스트)
 
 ## 작업 시 참고사항
 - `history/` 폴더에 중요한 의사결정과 진행상황 기록
@@ -61,6 +84,9 @@ source .venv/bin/activate
 # 에이전트 모드 (도구 사용 가능)
 not-agent agent
 
+# 에이전트 모드 (모델 지정)
+not-agent agent -m claude-haiku-4-5-20251001
+
 # 단순 채팅 (도구 없음)
 not-agent chat
 
@@ -71,9 +97,22 @@ not-agent ask "질문 내용"
 not-agent run "태스크 내용"
 ```
 
+## 설정 파일
+```json
+// ~/.not_agent/config.json (글로벌)
+// .not_agent.json (프로젝트)
+{
+  "model": "claude-sonnet-4-20250514",
+  "max_tokens": 16384,
+  "approval_enabled": true,
+  "debug": false
+}
+```
+
 ## 히스토리
 - 2026-01-09: 프로젝트 시작, 계획 수립
 - 2026-01-09: Phase 1 완료 (기초 인프라, LLM 연동, CLI)
 - 2026-01-09: Phase 2 완료 (Read, Write, Edit, Glob, Grep, Bash 도구)
 - 2026-01-10: Phase 2 확장 (WebSearch, WebFetch 도구 추가)
 - 2026-01-10: Phase 3 완료 (컨텍스트 관리, AskUserQuestion 도구)
+- 2026-01-11: Phase 4.1 완료 (구조 리팩토링: Config, Provider, ToolRegistry, Session, ContextManager)

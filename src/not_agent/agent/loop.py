@@ -1,14 +1,20 @@
 """Agent loop - Main agent execution loop."""
 
-import time
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from anthropic import Anthropic, RateLimitError, APIError
+from anthropic import RateLimitError, APIError
 from anthropic.types import Message, ToolUseBlock, TextBlock
 from rich.console import Console
 
+from not_agent.config import Config
+from not_agent.provider import get_provider, BaseProvider
 from not_agent.tools import ToolResult, TodoManager, get_all_tools
 from .executor import ToolExecutor
+from .session import Session
+from .context import ContextManager
+
+if TYPE_CHECKING:
+    pass
 
 # Debug console (shared instance)
 _debug_console = Console()
@@ -19,26 +25,50 @@ class AgentLoop:
 
     def __init__(
         self,
-        model: str = "claude-haiku-4-5-20251001",
-        max_turns: int = 20,
-        max_output_length: int = 10_000,
-        max_context_tokens: int = 100_000,
-        compaction_threshold: float = 0.75,
-        preserve_recent_messages: int = 3,
-        enable_auto_compaction: bool = True,
+        config: Config | None = None,
+        # Legacy parameters (하위 호환성)
+        model: str | None = None,
+        max_turns: int | None = None,
+        max_output_length: int | None = None,
+        max_context_tokens: int | None = None,
+        compaction_threshold: float | None = None,
+        preserve_recent_messages: int | None = None,
+        enable_auto_compaction: bool | None = None,
         executor: ToolExecutor | None = None,
         todo_manager: TodoManager | None = None,
-        debug: bool = False,
+        debug: bool | None = None,
     ) -> None:
-        self.client = Anthropic()
-        self.model = model
-        self.max_turns = max_turns
-        self.max_output_length = max_output_length
-        self.max_context_tokens = max_context_tokens
-        self.compaction_threshold = compaction_threshold
-        self.preserve_recent_messages = preserve_recent_messages
-        self.enable_auto_compaction = enable_auto_compaction
-        self.debug = debug
+        # Config 설정 (없으면 기본값 생성)
+        self.config = config or Config()
+
+        # Legacy parameters로 Config 오버라이드
+        if model is not None:
+            self.config.set("model", model)
+        if max_turns is not None:
+            self.config.set("max_turns", max_turns)
+        if max_output_length is not None:
+            self.config.set("max_output_length", max_output_length)
+        if max_context_tokens is not None:
+            self.config.set("context_limit", max_context_tokens)
+        if compaction_threshold is not None:
+            self.config.set("compact_threshold", compaction_threshold)
+        if preserve_recent_messages is not None:
+            self.config.set("preserve_recent_messages", preserve_recent_messages)
+        if enable_auto_compaction is not None:
+            self.config.set("enable_auto_compaction", enable_auto_compaction)
+        if debug is not None:
+            self.config.set("debug", debug)
+
+        # Provider 설정
+        self.provider: BaseProvider = get_provider(
+            self.config.get("provider", "claude"),
+            self.config
+        )
+
+        # 설정값 캐싱 (자주 사용됨)
+        self.max_turns = self.config.get("max_turns", 20)
+        self.max_output_length = self.config.get("max_output_length", 10_000)
+        self.debug = self.config.get("debug", False)
 
         # TodoManager 인스턴스 생성 (세션별 격리)
         self.todo_manager = todo_manager or TodoManager()
@@ -50,8 +80,46 @@ class AgentLoop:
             tools = get_all_tools(todo_manager=self.todo_manager)
             self.executor = ToolExecutor(tools=tools)
 
-        self.messages: list[dict[str, Any]] = []
+        # Session & Context Manager
+        self.session = Session()
+        self.context_manager = ContextManager(
+            config=self.config,
+            provider=self.provider,
+            preserve_recent_messages=self.config.get("preserve_recent_messages", 3),
+        )
+
         self.system_prompt = self._get_system_prompt()
+
+        # Spinner callbacks (run()에서 설정됨)
+        self.pause_spinner_callback: Any = None
+        self.resume_spinner_callback: Any = None
+        self.update_spinner_callback: Any = None
+
+    # --- Legacy compatibility properties ---
+    @property
+    def messages(self) -> list[dict[str, Any]]:
+        """Legacy: 직접 messages 접근 지원."""
+        return self.session.to_api_format()
+
+    @messages.setter
+    def messages(self, value: list[dict[str, Any]]) -> None:
+        """Legacy: messages 직접 설정 지원."""
+        self.session.set_messages(value)
+
+    @property
+    def max_context_tokens(self) -> int:
+        """Legacy property."""
+        return self.config.get("context_limit", 100_000)
+
+    @property
+    def preserve_recent_messages(self) -> int:
+        """Legacy property."""
+        return self.config.get("preserve_recent_messages", 3)
+
+    @property
+    def enable_auto_compaction(self) -> bool:
+        """Legacy property."""
+        return self.config.get("enable_auto_compaction", True)
 
     def _debug_log(self, message: str) -> None:
         """Print debug message in dim style if debug mode is enabled."""
@@ -137,7 +205,9 @@ Mark tasks as completed IMMEDIATELY after finishing (don't batch).
         self.pause_spinner_callback = pause_spinner_callback
         self.resume_spinner_callback = resume_spinner_callback
         self.update_spinner_callback = update_spinner_callback
-        self.messages.append({"role": "user", "content": user_message})
+
+        # Add user message to session
+        self.session.add_user_message(user_message)
 
         self._debug_log(f"\n{'='*60}")
         self._debug_log(f"[AGENT LOOP] Starting with user message: {user_message[:100]}...")
@@ -148,9 +218,8 @@ Mark tasks as completed IMMEDIATELY after finishing (don't batch).
             self._debug_log(f"[TURN {turn + 1}/{self.max_turns}]")
             self._debug_log(f"{'─'*60}")
 
-            # Don't force tool use - let LLM decide when it's ready
-            # Forcing tools can cause incomplete parameters (e.g., write without content)
-            response = self._call_llm(force_tool=False)
+            # LLM 호출
+            response = self._call_llm()
 
             # Check if there are tool calls
             tool_uses = [
@@ -169,7 +238,7 @@ Mark tasks as completed IMMEDIATELY after finishing (don't batch).
                 return text_response
 
             # Process tool calls
-            self.messages.append({"role": "assistant", "content": response.content})
+            self.session.add_assistant_message(list(response.content))
 
             self._debug_log(f"\n[TOOL EXECUTION] Executing {len(tool_uses)} tool(s)...")
 
@@ -199,7 +268,8 @@ Mark tasks as completed IMMEDIATELY after finishing (don't batch).
 
                 self._debug_log(f"    Success: {result.success}")
                 if result.success:
-                    self._debug_log(f"    Output: {result.output[:200]}...")
+                    output_preview = result.output[:200] if result.output else "(empty)"
+                    self._debug_log(f"    Output: {output_preview}...")
                 else:
                     self._debug_log(f"    Error: {result.error}")
 
@@ -216,7 +286,7 @@ Mark tasks as completed IMMEDIATELY after finishing (don't batch).
                     }
                 )
 
-            self.messages.append({"role": "user", "content": tool_results})
+            self.session.add_tool_results(tool_results)
             self._debug_log(f"\n[FEEDBACK] Tool results added to conversation")
 
             # Check context size after each turn
@@ -227,23 +297,13 @@ Mark tasks as completed IMMEDIATELY after finishing (don't batch).
         self._debug_log(f"{'='*60}\n")
         return "Max turns reached. Please continue with a new message."
 
-    def _call_llm(self, force_tool: bool = False) -> Message:
+    def _call_llm(self) -> Message:
         """Call the LLM with current messages."""
-        kwargs: dict[str, Any] = {
-            "model": self.model,
-            "max_tokens": 16*1024,
-            "system": self.system_prompt,
-            "tools": self.executor.get_tool_definitions(),
-            "messages": self.messages,
-        }
-
-        # Force tool use on first turn to encourage action
-        if force_tool:
-            kwargs["tool_choice"] = {"type": "any"}
+        messages = self.session.to_api_format()
 
         # Show LLM request
         self._debug_log(f"\n[LLM REQUEST]")
-        for i, msg in enumerate(self.messages, 1):
+        for i, msg in enumerate(messages, 1):
             role = msg['role']
             content = msg['content']
 
@@ -254,7 +314,7 @@ Mark tasks as completed IMMEDIATELY after finishing (don't batch).
                 # Check if it's tool results or assistant content
                 if all(isinstance(item, dict) and item.get('type') == 'tool_result' for item in content):
                     self._debug_log(f"  #{i} {role.upper()}: [Tool Results x{len(content)}]")
-                    for j, item in enumerate(content[:2], 1):  # Show first 2 tool results
+                    for j, item in enumerate(content[:2], 1):
                         result_preview = item['content'][:100] + "..." if len(item['content']) > 100 else item['content']
                         self._debug_log(f"      Result {j}: {result_preview}")
                     if len(content) > 2:
@@ -269,7 +329,20 @@ Mark tasks as completed IMMEDIATELY after finishing (don't batch).
                                 self._debug_log(f"  #{i} {role.upper()}: {item.text[:100]}...")
 
         try:
-            response = self.client.messages.create(**kwargs)
+            response = self.provider.chat(
+                messages=messages,
+                system=self.system_prompt,
+                tools=self.executor.get_tool_definitions(),
+                max_tokens=self.config.get("max_tokens", 16 * 1024),
+            )
+
+            # ProviderResponse -> anthropic Message 형식으로 변환 (기존 코드 호환)
+            # response.content는 이미 리스트 형태
+            return type('Message', (), {
+                'content': response.content,
+                'stop_reason': response.stop_reason,
+            })()
+
         except RateLimitError as e:
             self._debug_log(f"\n{'='*60}")
             self._debug_log(f"[API ERROR] Rate Limit Exceeded")
@@ -302,25 +375,6 @@ Mark tasks as completed IMMEDIATELY after finishing (don't batch).
             self._debug_log(f"{'='*60}\n")
             raise
 
-        # Show LLM response
-        self._debug_log(f"\n[LLM RESPONSE] (stop_reason: {response.stop_reason})")
-        for i, block in enumerate(response.content, 1):
-            if isinstance(block, ToolUseBlock):
-                self._debug_log(f"  #{i} ToolUse: {block.name}")
-                input_str = str(block.input)
-                self._debug_log(f"      Input: {input_str[:150]}...")
-                # 특히 write 도구의 content가 비어있는지 체크
-                if block.name == "write":
-                    content = block.input.get("content", "")
-                    if not content:
-                        self._debug_log(f"      [ERROR] write tool called with EMPTY content!")
-                    else:
-                        self._debug_log(f"      Content length: {len(content)} chars")
-            elif isinstance(block, TextBlock):
-                self._debug_log(f"  #{i} Text: {block.text[:150]}...")
-
-        return response
-
     def _format_tool_result(self, result: ToolResult) -> str:
         """Format a tool result for the LLM."""
         if result.success:
@@ -342,256 +396,49 @@ Mark tasks as completed IMMEDIATELY after finishing (don't batch).
                 )
             return error_output
 
-    def _estimate_tokens(self, text: str) -> int:
-        """Estimate token count for text (rough approximation)."""
-        # Simple estimation: ~4 characters per token on average
-        return len(text) // 4
-
-    def _count_messages_tokens(self) -> int:
-        """Count total tokens in message history."""
-        total = 0
-
-        for msg in self.messages:
-            content = msg.get("content", "")
-
-            if isinstance(content, str):
-                total += self._estimate_tokens(content)
-            elif isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict):
-                        # Tool result or structured content
-                        item_str = str(item.get("content", ""))
-                        total += self._estimate_tokens(item_str)
-                    elif hasattr(item, "text"):
-                        # TextBlock
-                        total += self._estimate_tokens(item.text)
-
-        # Add system prompt tokens
-        total += self._estimate_tokens(self.system_prompt)
-
-        return total
-
     def _check_context_size(self) -> None:
         """Check and warn if context is getting large."""
-        token_count = self._count_messages_tokens()
-
         # Auto-compact if threshold reached
-        if self._should_compact():
-            self._compact_context()
-            return  # Exit after compaction
+        if self.enable_auto_compaction and self.context_manager.should_compact(self.session):
+            self.context_manager.compact(
+                session=self.session,
+                system_prompt=self.system_prompt,
+                debug_log=self._debug_log if self.debug else None,
+            )
+            return
 
-        # Warnings if not compacting
-        if token_count > self.max_context_tokens:
-            self._debug_log(f"\n[WARNING] Context size ({token_count:,} tokens) exceeds limit ({self.max_context_tokens:,} tokens)")
+        # Warnings
+        usage = self.context_manager.get_usage_info(self.session)
+        token_count = usage["current"]
+        max_tokens = usage["max"]
+
+        if token_count > max_tokens:
+            self._debug_log(f"\n[WARNING] Context size ({token_count:,} tokens) exceeds limit ({max_tokens:,} tokens)")
             self._debug_log(f"[WARNING] Consider using 'reset' command to clear history")
-        elif token_count > self.max_context_tokens * 0.8:
-            self._debug_log(f"\n[INFO] Context size: {token_count:,} / {self.max_context_tokens:,} tokens (80%+)")
+        elif token_count > max_tokens * 0.8:
+            self._debug_log(f"\n[INFO] Context size: {token_count:,} / {max_tokens:,} tokens (80%+)")
 
-    def get_context_usage(self) -> dict[str, any]:
+    def get_context_usage(self) -> dict[str, Any]:
         """Get current context usage information."""
-        token_count = self._count_messages_tokens()
-        percentage = (token_count / self.max_context_tokens) * 100
-
-        return {
-            "current": token_count,
-            "max": self.max_context_tokens,
-            "percentage": percentage,
-            "messages": len(self.messages),
-        }
+        return self.context_manager.get_usage_info(self.session)
 
     def reset(self) -> None:
         """Reset the conversation history."""
-        self.messages = []
+        self.session.clear()
+
+    # --- Legacy methods for backward compatibility ---
+    def _count_messages_tokens(self) -> int:
+        """Legacy: 토큰 수 추정."""
+        return self.context_manager.estimate_tokens(self.session)
 
     def _should_compact(self) -> bool:
-        """Check if context compaction is needed."""
-        if not self.enable_auto_compaction:
-            return False
-
-        # Need at least preserve_recent_messages + 2 to have something to compact
-        if len(self.messages) <= self.preserve_recent_messages + 2:
-            return False
-
-        token_count = self._count_messages_tokens()
-        threshold = int(self.max_context_tokens * self.compaction_threshold)
-
-        return token_count >= threshold
-
-    def _generate_summary(self, messages_to_summarize: list[dict[str, Any]]) -> str:
-        """Generate a summary of messages using AI."""
-        summary_prompt = """You have been assisting the user but the conversation is getting long.
-Create a concise summary that preserves essential information for continuing the work.
-
-Include in your summary:
-
-1. **Task Overview**
-   - User's main request and goals
-   - Any constraints or requirements
-
-2. **Work Completed**
-   - Files read, created, or modified (with exact paths)
-   - Commands executed successfully
-   - Key findings or outputs
-
-3. **Important Context**
-   - Variable names, function names, class names mentioned
-   - Technical decisions made and reasons
-   - Errors encountered and how they were resolved
-   - User preferences or style requirements
-
-4. **Current State**
-   - What needs to be done next
-   - Any blockers or open questions
-
-Keep the summary concise (under 1000 words) but preserve ALL critical details.
-Focus on facts, not process. Include specific names (files, variables, etc.).
-Wrap your entire summary in <summary></summary> tags."""
-
-        try:
-            # Clean messages to remove tool content (only keep text for summary)
-            # This avoids passing tool_use/tool_result to the summary API
-            cleaned_messages = []
-            for msg in messages_to_summarize:
-                role = msg.get("role")
-                content = msg.get("content")
-
-                if isinstance(content, str):
-                    # Simple text message - keep as is
-                    cleaned_messages.append(msg)
-                elif isinstance(content, list):
-                    # Mixed content - extract only text parts
-                    text_parts = []
-                    for item in content:
-                        if isinstance(item, dict):
-                            if item.get("type") == "text":
-                                text_parts.append(item.get("text", ""))
-                            elif item.get("type") == "tool_use":
-                                tool_name = item.get("name", "unknown")
-                                tool_input = str(item.get("input", {}))[:100]
-                                text_parts.append(f"[Used tool: {tool_name} with {tool_input}...]")
-                            elif item.get("type") == "tool_result":
-                                result = str(item.get("content", ""))[:200]
-                                text_parts.append(f"[Tool result: {result}...]")
-                        elif hasattr(item, "text"):
-                            text_parts.append(item.text)
-
-                    if text_parts:
-                        cleaned_messages.append({
-                            "role": role,
-                            "content": "\n".join(text_parts)
-                        })
-
-            # Call Claude API for summarization
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=8*1024,
-                system="You are a helpful assistant that creates concise summaries.",
-                messages=cleaned_messages + [
-                    {"role": "user", "content": summary_prompt}
-                ],
-            )
-
-            # Extract text from response
-            text = "".join(
-                block.text for block in response.content if hasattr(block, "text")
-            )
-
-            # Extract summary from tags
-            import re
-            match = re.search(r"<summary>(.*?)</summary>", text, re.DOTALL)
-            if match:
-                return match.group(1).strip()
-            else:
-                return text.strip()
-
-        except Exception as e:
-            self._debug_log(f"[ERROR] Failed to generate summary: {e}")
-            # Fallback: simple concatenation
-            return "Previous conversation covered multiple topics. Context preserved."
-
-    def _replace_with_summary(self, summary: str) -> None:
-        """Replace old messages with summary."""
-        # Extract recent messages
-        recent_messages = self.messages[-self.preserve_recent_messages:]
-
-        # IMPORTANT: Validate that we don't break tool_use/tool_result pairs
-        # If the first recent message is a tool_result, we need to include the previous tool_use
-        if recent_messages and recent_messages[0].get("role") == "user":
-            content = recent_messages[0].get("content", [])
-            # Check if content is a list of tool results
-            if isinstance(content, list) and any(
-                isinstance(item, dict) and item.get("type") == "tool_result"
-                for item in content
-            ):
-                # Need to find the corresponding tool_use in the previous message
-                # Include one more message (the assistant message with tool_use)
-                if len(self.messages) > self.preserve_recent_messages:
-                    recent_messages = self.messages[-(self.preserve_recent_messages + 1):]
-                    self._debug_log(f"[INFO] Extended recent messages to preserve tool_use/tool_result pairs")
-
-        # Create summary message
-        summary_message = {
-            "role": "user",
-            "content": f"[Previous conversation summary]\n\n{summary}"
-        }
-
-        # Replace history
-        self.messages = [summary_message] + recent_messages
+        """Legacy: 컴팩션 필요 여부."""
+        return self.context_manager.should_compact(self.session)
 
     def _compact_context(self) -> None:
-        """Perform context compaction by summarizing old messages."""
-        self._debug_log(f"\n{'='*60}")
-        self._debug_log(f"[CONTEXT COMPACTION] Starting...")
-        self._debug_log(f"{'='*60}")
-
-        # Pre-compaction stats
-        original_count = len(self.messages)
-        original_tokens = self._count_messages_tokens()
-
-        self._debug_log(f"[INFO] Current state: {original_count} messages, {original_tokens:,} tokens")
-        self._debug_log(f"[INFO] Preserving recent {self.preserve_recent_messages} messages")
-
-        # Find safe split point (don't break tool_use/tool_result pairs)
-        preserve_count = self.preserve_recent_messages
-
-        # Check if we need to extend to preserve tool pairs
-        if len(self.messages) > preserve_count:
-            first_recent = self.messages[-preserve_count]
-
-            # If first recent message is a tool_result, include the previous tool_use
-            if first_recent.get("role") == "user":
-                content = first_recent.get("content", [])
-                if isinstance(content, list) and any(
-                    isinstance(item, dict) and item.get("type") == "tool_result"
-                    for item in content
-                ):
-                    preserve_count += 1
-                    self._debug_log(f"[INFO] Extended preserve count to {preserve_count} to keep tool pairs intact")
-
-        # Split messages at safe point
-        messages_to_summarize = self.messages[:-preserve_count]
-
-        self._debug_log(f"[INFO] Summarizing {len(messages_to_summarize)} older messages...")
-
-        # Generate summary (clean messages without tool_result orphans)
-        summary = self._generate_summary(messages_to_summarize)
-
-        self._debug_log(f"[INFO] Summary generated ({len(summary)} characters)")
-
-        # Replace history (using updated preserve_count)
-        recent_messages = self.messages[-preserve_count:]
-        summary_message = {
-            "role": "user",
-            "content": f"[Previous conversation summary]\n\n{summary}"
-        }
-        self.messages = [summary_message] + recent_messages
-
-        # Post-compaction stats
-        new_count = len(self.messages)
-        new_tokens = self._count_messages_tokens()
-        reduction = ((original_tokens - new_tokens) / original_tokens) * 100
-
-        self._debug_log(f"[SUCCESS] Compaction complete!")
-        self._debug_log(f"[SUCCESS] Messages: {original_count} → {new_count}")
-        self._debug_log(f"[SUCCESS] Tokens: {original_tokens:,} → {new_tokens:,} ({reduction:.1f}% reduction)")
-        self._debug_log(f"{'='*60}\n")
+        """Legacy: 컨텍스트 컴팩션."""
+        self.context_manager.compact(
+            session=self.session,
+            system_prompt=self.system_prompt,
+            debug_log=self._debug_log if self.debug else None,
+        )

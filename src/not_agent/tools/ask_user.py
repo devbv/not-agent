@@ -6,11 +6,13 @@ from rich.console import Console
 from rich.panel import Panel
 
 from .base import BaseTool, ToolResult
+from .registry import register_tool
 
 
 console = Console()
 
 
+@register_tool
 class AskUserQuestionTool(BaseTool):
     """Tool for asking the user questions when clarification is needed."""
 

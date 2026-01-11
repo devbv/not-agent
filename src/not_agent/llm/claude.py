@@ -1,39 +1,31 @@
-"""Claude API integration."""
+"""Claude client (deprecated, use provider module instead)."""
 
-import os
-import sys
-
-from anthropic import Anthropic
+import warnings
+from not_agent.config import Config
+from not_agent.provider import ClaudeProvider
 
 
 class ClaudeClient:
-    """Claude API client wrapper."""
+    """
+    Legacy ClaudeClient for backward compatibility.
+
+    Deprecated: Use ClaudeProvider from not_agent.provider instead.
+    """
 
     def __init__(self, model: str = "claude-sonnet-4-20250514") -> None:
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            print(
-                "[Error] ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다.\n"
-                "다음 명령어로 설정하세요:\n"
-                "  export ANTHROPIC_API_KEY='your-api-key'"
-            )
-            sys.exit(1)
-        self.client = Anthropic(api_key=api_key)
-        self.model = model
+        warnings.warn(
+            "ClaudeClient is deprecated. Use ClaudeProvider from not_agent.provider instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        config = Config()
+        config.set("model", model)
+        self._provider = ClaudeProvider(config)
 
     def chat(self, message: str, system: str | None = None) -> str:
-        """Send a message to Claude and get a response."""
-        messages = [{"role": "user", "content": message}]
+        """
+        Legacy chat method.
 
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=4096,
-            system=system or "You are a helpful coding assistant.",
-            messages=messages,
-        )
-
-        # Extract text from response
-        text_content = [
-            block.text for block in response.content if hasattr(block, "text")
-        ]
-        return "\n".join(text_content)
+        Deprecated: Use ClaudeProvider.simple_chat() instead.
+        """
+        return self._provider.simple_chat(message, system)

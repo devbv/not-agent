@@ -5,21 +5,18 @@ from pathlib import Path
 from typing import Any
 
 from .base import BaseTool, ToolResult
+from .registry import register_tool
 
 
+@register_tool
 class WriteTool(BaseTool):
     """Tool for writing content to files."""
 
-    @property
-    def name(self) -> str:
-        return "write"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Write content to a file. "
-            "Creates the file if it doesn't exist, overwrites if it does."
-        )
+    name = "write"
+    description = (
+        "Write content to a file. "
+        "Creates the file if it doesn't exist, overwrites if it does."
+    )
 
     @property
     def parameters(self) -> dict[str, Any]:

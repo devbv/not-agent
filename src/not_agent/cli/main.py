@@ -4,7 +4,11 @@ import os
 import sys
 from typing import TYPE_CHECKING
 
+from dotenv import load_dotenv
 import click
+
+# .env 파일에서 환경변수 로드 (프로젝트 루트에서 자동 검색)
+load_dotenv()
 from rich.console import Console, Group
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -16,10 +20,11 @@ from prompt_toolkit.history import FileHistory
 
 from anthropic import RateLimitError, APIError
 
+from not_agent.config import Config
+from not_agent.provider import get_provider
 from not_agent.agent import AgentLoop
 from not_agent.agent.approval import ApprovalManager
 from not_agent.agent.executor import ToolExecutor
-from not_agent.llm.claude import ClaudeClient
 from not_agent.tools import TodoManager, get_all_tools
 
 
@@ -193,15 +198,20 @@ def check_api_key() -> None:
 
 @click.group()
 @click.version_option()
-def cli() -> None:
+@click.pass_context
+def cli(ctx: click.Context) -> None:
     """Not Agent - A coding agent similar to Claude Code."""
-    pass
+    ctx.ensure_object(dict)
+    # 전역 Config 인스턴스 생성
+    ctx.obj["config"] = Config()
 
 
 @cli.command()
-def chat() -> None:
+@click.pass_context
+def chat(ctx: click.Context) -> None:
     """Start an interactive chat session (simple mode, no tools)."""
     check_api_key()
+    config = ctx.obj["config"]
 
     console.print(
         Panel(
@@ -211,7 +221,8 @@ def chat() -> None:
         )
     )
 
-    client = ClaudeClient()
+    # Provider를 사용한 간단한 채팅
+    provider = get_provider(config.get("provider", "claude"), config)
     history = FileHistory(".not_agent_history")
 
     while True:
@@ -231,7 +242,7 @@ def chat() -> None:
 
             try:
                 with console.status("[bold green]Thinking...[/bold green]"):
-                    response = client.chat(user_input)
+                    response = provider.simple_chat(user_input)
 
                 console.print()
                 console.print(Markdown(response))
@@ -252,6 +263,11 @@ def chat() -> None:
 
 @cli.command()
 @click.option(
+    "--model", "-m",
+    default=None,
+    help="Model to use (e.g., claude-sonnet-4-20250514)",
+)
+@click.option(
     "--approval/--no-approval",
     default=True,
     help="Require approval for file modifications (default: enabled)",
@@ -262,9 +278,17 @@ def chat() -> None:
     default=False,
     help="Enable debug output (shows LLM requests, tool executions, etc.)",
 )
-def agent(approval: bool, debug: bool) -> None:
+@click.pass_context
+def agent(ctx: click.Context, model: str | None, approval: bool, debug: bool) -> None:
     """Start an interactive agent session with tools."""
     check_api_key()
+    config = ctx.obj["config"]
+
+    # CLI 옵션으로 Config 오버라이드
+    if model:
+        config.set("model", model)
+    config.set("approval_enabled", approval)
+    config.set("debug", debug)
 
     # Create TodoManager (세션별 인스턴스)
     todo_manager = TodoManager()
@@ -276,12 +300,18 @@ def agent(approval: bool, debug: bool) -> None:
     tools = get_all_tools(todo_manager=todo_manager)
     executor = ToolExecutor(tools=tools, approval_manager=approval_manager)
 
-    # Create agent loop with executor and TodoManager
-    agent_loop = AgentLoop(executor=executor, todo_manager=todo_manager, debug=debug)
+    # Create agent loop with config and executor
+    agent_loop = AgentLoop(
+        config=config,
+        executor=executor,
+        todo_manager=todo_manager,
+    )
 
     # Show welcome message
+    model_name = config.get("model", "default")
     welcome_msg = (
-        "[bold blue]Not Agent[/bold blue] - Agent Mode (with Tools)\n"
+        f"[bold blue]Not Agent[/bold blue] - Agent Mode (with Tools)\n"
+        f"Model: [cyan]{model_name}[/cyan]\n"
         "Type [bold]exit[/bold] or [bold]quit[/bold] to end the session.\n"
         "Type [bold]reset[/bold] to clear conversation history.\n"
         "Type [bold]status[/bold] to show context usage.\n"
@@ -382,15 +412,17 @@ def agent(approval: bool, debug: bool) -> None:
 
 @cli.command()
 @click.argument("message")
-def ask(message: str) -> None:
+@click.pass_context
+def ask(ctx: click.Context, message: str) -> None:
     """Ask a single question and get a response."""
     check_api_key()
+    config = ctx.obj["config"]
 
-    client = ClaudeClient()
+    provider = get_provider(config.get("provider", "claude"), config)
 
     try:
         with console.status("[bold green]Thinking...[/bold green]"):
-            response = client.chat(message)
+            response = provider.simple_chat(message)
 
         console.print(Markdown(response))
     except RateLimitError:
@@ -407,6 +439,11 @@ def ask(message: str) -> None:
 @cli.command()
 @click.argument("message")
 @click.option(
+    "--model", "-m",
+    default=None,
+    help="Model to use (e.g., claude-sonnet-4-20250514)",
+)
+@click.option(
     "--approval/--no-approval",
     default=True,
     help="Require approval for file modifications (default: enabled)",
@@ -417,9 +454,17 @@ def ask(message: str) -> None:
     default=False,
     help="Enable debug output (shows LLM requests, tool executions, etc.)",
 )
-def run(message: str, approval: bool, debug: bool) -> None:
+@click.pass_context
+def run(ctx: click.Context, message: str, model: str | None, approval: bool, debug: bool) -> None:
     """Run agent with a single task (with tools)."""
     check_api_key()
+    config = ctx.obj["config"]
+
+    # CLI 옵션으로 Config 오버라이드
+    if model:
+        config.set("model", model)
+    config.set("approval_enabled", approval)
+    config.set("debug", debug)
 
     # Create TodoManager (세션별 인스턴스)
     todo_manager = TodoManager()
@@ -431,8 +476,12 @@ def run(message: str, approval: bool, debug: bool) -> None:
     tools = get_all_tools(todo_manager=todo_manager)
     executor = ToolExecutor(tools=tools, approval_manager=approval_manager)
 
-    # Create agent loop with executor and TodoManager
-    agent_loop = AgentLoop(executor=executor, todo_manager=todo_manager, debug=debug)
+    # Create agent loop with config and executor
+    agent_loop = AgentLoop(
+        config=config,
+        executor=executor,
+        todo_manager=todo_manager,
+    )
 
     if approval:
         console.print("[green]✓ Approval mode enabled[/green]")

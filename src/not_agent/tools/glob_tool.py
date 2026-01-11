@@ -4,21 +4,18 @@ from pathlib import Path
 from typing import Any
 
 from .base import BaseTool, ToolResult
+from .registry import register_tool
 
 
+@register_tool
 class GlobTool(BaseTool):
     """Tool for finding files by glob pattern."""
 
-    @property
-    def name(self) -> str:
-        return "glob"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Find files matching a glob pattern. "
-            "Supports patterns like '**/*.py', 'src/**/*.ts', etc."
-        )
+    name = "glob"
+    description = (
+        "Find files matching a glob pattern. "
+        "Supports patterns like '**/*.py', 'src/**/*.ts', etc."
+    )
 
     @property
     def parameters(self) -> dict[str, Any]:

@@ -5,21 +5,18 @@ from pathlib import Path
 from typing import Any
 
 from .base import BaseTool, ToolResult
+from .registry import register_tool
 
 
+@register_tool
 class GrepTool(BaseTool):
     """Tool for searching file contents with regex."""
 
-    @property
-    def name(self) -> str:
-        return "grep"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Search for a pattern in files using regex. "
-            "Returns matching lines with file paths and line numbers."
-        )
+    name = "grep"
+    description = (
+        "Search for a pattern in files using regex. "
+        "Returns matching lines with file paths and line numbers."
+    )
 
     @property
     def parameters(self) -> dict[str, Any]:

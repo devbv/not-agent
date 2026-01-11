@@ -4,10 +4,18 @@ import subprocess
 from typing import Any
 
 from .base import BaseTool, ToolResult
+from .registry import register_tool
 
 
+@register_tool
 class BashTool(BaseTool):
     """Tool for executing shell commands."""
+
+    name = "bash"
+    description = (
+        "Execute a bash command. "
+        "Use for running scripts, git commands, package managers, etc."
+    )
 
     # 위험한 명령어 패턴
     DANGEROUS_PATTERNS = [
@@ -19,17 +27,6 @@ class BashTool(BaseTool):
         ">>",  # 추가 리다이렉션
         "|",  # 파이프 (일부 위험할 수 있음)
     ]
-
-    @property
-    def name(self) -> str:
-        return "bash"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Execute a bash command. "
-            "Use for running scripts, git commands, package managers, etc."
-        )
 
     @property
     def parameters(self) -> dict[str, Any]:

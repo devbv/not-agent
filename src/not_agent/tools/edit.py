@@ -4,22 +4,19 @@ from pathlib import Path
 from typing import Any
 
 from .base import BaseTool, ToolResult
+from .registry import register_tool
 
 
+@register_tool
 class EditTool(BaseTool):
     """Tool for editing files by replacing text."""
 
-    @property
-    def name(self) -> str:
-        return "edit"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Edit a file by replacing an exact string with new content. "
-            "The old_string must match exactly (including whitespace). "
-            "CRITICAL: You MUST provide ALL three required parameters (file_path, old_string, new_string) in a single call."
-        )
+    name = "edit"
+    description = (
+        "Edit a file by replacing an exact string with new content. "
+        "The old_string must match exactly (including whitespace). "
+        "CRITICAL: You MUST provide ALL three required parameters (file_path, old_string, new_string) in a single call."
+    )
 
     @property
     def parameters(self) -> dict[str, Any]:

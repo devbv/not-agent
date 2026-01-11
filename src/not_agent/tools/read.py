@@ -4,21 +4,18 @@ from pathlib import Path
 from typing import Any
 
 from .base import BaseTool, ToolResult
+from .registry import register_tool
 
 
+@register_tool
 class ReadTool(BaseTool):
     """Tool for reading file contents."""
 
-    @property
-    def name(self) -> str:
-        return "read"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Read the contents of a file. "
-            "Returns the file content with line numbers."
-        )
+    name = "read"
+    description = (
+        "Read the contents of a file. "
+        "Returns the file content with line numbers."
+    )
 
     @property
     def parameters(self) -> dict[str, Any]:
