@@ -16,11 +16,10 @@ console = Console()
 class AskUserQuestionTool(BaseTool):
     """Tool for asking the user questions when clarification is needed."""
 
-    name = "AskUserQuestion"
+    name = "ask_user"
     description = (
-        "Ask the user a question when you need clarification, confirmation, "
-        "or have to choose between multiple approaches. "
-        "Use this when you're unsure about requirements or need user input."
+        "Ask the user a question for clarification or confirmation. "
+        "Use when: Unsure about requirements or need to choose between approaches."
     )
 
     @property

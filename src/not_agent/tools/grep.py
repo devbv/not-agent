@@ -14,8 +14,8 @@ class GrepTool(BaseTool):
 
     name = "grep"
     description = (
-        "Search for a pattern in files using regex. "
-        "Returns matching lines with file paths and line numbers."
+        "Search file contents with regex, returns matches with file:line. "
+        "Use when: user asks to find code containing specific text/pattern."
     )
 
     @property

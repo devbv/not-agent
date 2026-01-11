@@ -13,9 +13,10 @@ class EditTool(BaseTool):
 
     name = "edit"
     description = (
-        "Edit a file by replacing an exact string with new content. "
-        "The old_string must match exactly (including whitespace). "
-        "CRITICAL: You MUST provide ALL three required parameters (file_path, old_string, new_string) in a single call."
+        "Edit a file by replacing exact text. "
+        "Use when: user asks to modify/change/update existing file content. "
+        "old_string must match exactly (including whitespace). "
+        "Provide file_path, old_string, new_string in a single call."
     )
 
     @property

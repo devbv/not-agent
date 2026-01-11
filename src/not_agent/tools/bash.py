@@ -13,8 +13,8 @@ class BashTool(BaseTool):
 
     name = "bash"
     description = (
-        "Execute a bash command. "
-        "Use for running scripts, git commands, package managers, etc."
+        "Execute a bash command (scripts, git, npm, etc.). "
+        "Use when: user asks to run a command or execute something in terminal."
     )
 
     # 위험한 명령어 패턴

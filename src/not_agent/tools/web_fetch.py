@@ -19,16 +19,12 @@ except ImportError:
 class WebFetchTool(BaseTool):
     """Tool for fetching content from URLs and converting HTML to plain text."""
 
-    name = "WebFetch"
-    description = """Fetches content from a specified URL and converts HTML to plain text.
-Takes a URL as input and returns the text content with HTML tags removed.
-
-Usage notes:
-- The URL must be a fully-formed valid URL
-- HTTP URLs will be automatically upgraded to HTTPS
-- Returns plain text content with HTML tags, scripts, and styles removed
-- Results may be truncated if the content is very large (max 50,000 characters)
-- This tool is read-only and does not modify any files"""
+    name = "web_fetch"
+    description = (
+        "Fetch URL content and convert HTML to plain text. "
+        "Use when: user asks to read/fetch a web page or URL. "
+        "HTTP auto-upgrades to HTTPS. Large content may be truncated."
+    )
 
     @property
     def parameters(self) -> dict[str, Any]:

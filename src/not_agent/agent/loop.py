@@ -127,10 +127,29 @@ class AgentLoop:
         """Legacy property."""
         return self.config.get("enable_auto_compaction", True)
 
+    # Debug formatting
+    _SEP = "=" * 60
+
     def _debug_log(self, message: str) -> None:
         """Print debug message in dim style if debug mode is enabled."""
         if self.debug:
             _debug_console.print(f"[dim]{message}[/dim]")
+
+    def _debug_box(
+        self,
+        title: str,
+        messages: list[str] | None = None,
+        suggestions: list[str] | None = None,
+    ) -> None:
+        """Print a formatted debug box."""
+        lines = [f"\n{self._SEP}", title, self._SEP]
+        if messages:
+            lines.extend(f"[ERROR] {m}" for m in messages)
+        if suggestions:
+            lines.append("\n[SUGGESTION] Please try one of the following:")
+            lines.extend(f"  {i}. {s}" for i, s in enumerate(suggestions, 1))
+        lines.append(f"{self._SEP}\n")
+        self._debug_log("\n".join(lines))
 
     # --- State management ---
 
@@ -184,65 +203,21 @@ class AgentLoop:
         return None  # 계속 진행
 
     def _get_system_prompt(self) -> str:
-        """Get the system prompt for the agent."""
-        return """You are a coding agent that takes action using tools.
+        """Get the system prompt for the agent.
 
-IMPORTANT: You MUST use tools to complete tasks. Do NOT just explain how to do something - actually DO it using your tools.
+        Note: Tool-specific details are in each tool's description.
+        This prompt focuses only on agent behavior and workflow.
+        """
+        return """You are a coding agent that completes tasks using tools.
 
-WORKFLOW: You can use multiple turns:
-- Turn 1: Use tools to gather information (read, glob, grep, etc.)
-- Turn 2+: Use tools to take action (write, edit, bash, etc.)
-- You are NOT required to use tools in every single turn if you need to process information first
+CRITICAL: Take action immediately. Do NOT explain how to do something - DO it.
 
-Available tools:
-- read: Read file contents
-- write: Write content to a file (provide file_path and complete content)
-- edit: Edit files by replacing text
-- glob: Find files by pattern (e.g., "**/*.py")
-- grep: Search file contents with regex
-- bash: Execute shell commands
-- WebSearch: Search the web for information
-- WebFetch: Fetch URL content and convert HTML to plain text
-- AskUserQuestion: Ask the user for clarification
-- TodoWrite: Update todo list (replaces entire list)
-- TodoRead: Read current todo list
+WORKFLOW:
+1. Gather information first (read, glob, grep)
+2. Then take action (write, edit, bash)
+3. Summarize what you did
 
-RULES:
-1. When asked to find/search something → USE the glob or grep tool immediately
-2. When asked to read/show a file → USE the read tool immediately
-3. When asked to create/write a file → USE write tool with file_path and COMPLETE content
-4. When asked to modify a file → USE the edit tool immediately
-5. When asked to run a command → USE the bash tool immediately
-6. When asked about recent/latest information → USE WebSearch immediately
-7. When asked to fetch/read a URL or web page → USE WebFetch to get the text, then analyze it
-8. NEVER explain methods or options - just take action
-9. After using tools, summarize what you found/did
-
-CRITICAL for write tool:
-- You MUST provide BOTH file_path AND content in a single call
-- Generate the full content first, then call write with all text included
-- Example: write(file_path="/path/to/file.txt", content="Complete content here...")
-
-TODO TOOL USAGE:
-Use TodoWrite to plan and track complex tasks (3+ steps).
-
-When to use:
-- Complex tasks with 3+ steps
-- User requests multiple things at once
-- Multi-file changes
-
-When NOT to use:
-- Single, simple tasks
-- Tasks under 3 steps
-- Pure conversation/information requests
-
-Status values:
-- pending: Not yet started
-- in_progress: Currently working on (only ONE at a time!)
-- completed: Finished
-
-Mark tasks as completed IMMEDIATELY after finishing (don't batch).
-"""
+When unsure about requirements, use ask_user."""
 
     def run(
         self,
@@ -283,16 +258,12 @@ Mark tasks as completed IMMEDIATELY after finishing (don't batch).
             self._set_state(LoopState.RECEIVING_INPUT)
             self.session.add_user_message(user_message)
 
-            self._debug_log(f"\n{'='*60}")
-            self._debug_log(f"[AGENT LOOP] Starting with user message: {user_message[:100]}...")
-            self._debug_log(f"{'='*60}\n")
+            self._debug_box(f"[AGENT LOOP] Starting with user message: {user_message[:100]}...")
 
             for turn in range(self.max_turns):
                 self.context.current_turn = turn + 1
 
-                self._debug_log(f"\n{'─'*60}")
-                self._debug_log(f"[TURN {turn + 1}/{self.max_turns}]")
-                self._debug_log(f"{'─'*60}")
+                self._debug_box(f"[TURN {turn + 1}/{self.max_turns}]")
 
                 # LLM 호출
                 self._set_state(LoopState.CALLING_LLM)
@@ -341,15 +312,15 @@ Mark tasks as completed IMMEDIATELY after finishing (don't batch).
                     else:
                         self._debug_log(f"    Input: {input_str}")
 
-                    # Pause spinner for AskUserQuestion to allow clean user input
-                    if tool_use.name == "AskUserQuestion" and self.pause_spinner_callback:
+                    # Pause spinner for ask_user to allow clean user input
+                    if tool_use.name == "ask_user" and self.pause_spinner_callback:
                         self.pause_spinner_callback()
 
                     result = self.executor.execute(tool_use.name, tool_input)
                     self.context.total_tool_calls += 1
 
-                    # Resume spinner after AskUserQuestion
-                    if tool_use.name == "AskUserQuestion" and self.resume_spinner_callback:
+                    # Resume spinner after ask_user
+                    if tool_use.name == "ask_user" and self.resume_spinner_callback:
                         self.resume_spinner_callback()
 
                     self._debug_log(f"    Success: {result.success}")
@@ -360,7 +331,7 @@ Mark tasks as completed IMMEDIATELY after finishing (don't batch).
                         self._debug_log(f"    Error: {result.error}")
 
                     # Update spinner with new todo status (live display)
-                    if tool_use.name == "TodoWrite" and result.success:
+                    if tool_use.name == "todo_write" and result.success:
                         if self.update_spinner_callback:
                             self.update_spinner_callback()
 
@@ -383,9 +354,7 @@ Mark tasks as completed IMMEDIATELY after finishing (don't batch).
             self.context.termination_reason = TerminationReason.MAX_TURNS
             self._set_state(LoopState.COMPLETED)
 
-            self._debug_log(f"\n{'='*60}")
-            self._debug_log(f"[MAX TURNS] Reached maximum turns ({self.max_turns})")
-            self._debug_log(f"{'='*60}\n")
+            self._debug_box(f"[MAX TURNS] Reached maximum turns ({self.max_turns})")
             return "Max turns reached. Please continue with a new message."
 
         except KeyboardInterrupt:
@@ -427,11 +396,15 @@ Mark tasks as completed IMMEDIATELY after finishing (don't batch).
                 else:
                     # Assistant message with mixed content
                     for item in content:
-                        if hasattr(item, 'type'):
-                            if item.type == 'tool_use':
-                                self._debug_log(f"  #{i} {role.upper()}: Tool={item.name}, Input={str(item.input)[:80]}...")
-                            elif item.type == 'text':
-                                self._debug_log(f"  #{i} {role.upper()}: {item.text[:100]}...")
+                        # Handle both SDK objects (hasattr) and dicts
+                        item_type = getattr(item, 'type', None) or (item.get('type') if isinstance(item, dict) else None)
+                        if item_type == 'tool_use':
+                            name = getattr(item, 'name', None) or item.get('name', '?')
+                            input_data = getattr(item, 'input', None) or item.get('input', {})
+                            self._debug_log(f"  #{i} {role.upper()}: Tool={name}, Input={str(input_data)[:80]}...")
+                        elif item_type == 'text':
+                            text = getattr(item, 'text', None) or item.get('text', '')
+                            self._debug_log(f"  #{i} {role.upper()}: {text[:100]}...")
 
         try:
             response = self.provider.chat(
@@ -449,35 +422,29 @@ Mark tasks as completed IMMEDIATELY after finishing (don't batch).
             })()
 
         except RateLimitError as e:
-            self._debug_log(f"\n{'='*60}")
-            self._debug_log(f"[API ERROR] Rate Limit Exceeded")
-            self._debug_log(f"{'='*60}")
-            self._debug_log(f"[ERROR] Claude API rate limit reached.")
-            self._debug_log(f"[ERROR] {str(e)}")
-            self._debug_log(f"\n[SUGGESTION] Please try one of the following:")
-            self._debug_log(f"  1. Wait a few moments and try again")
-            self._debug_log(f"  2. Use 'reset' to clear conversation history")
-            self._debug_log(f"  3. Reduce the size of your request")
-            self._debug_log(f"{'='*60}\n")
+            self._debug_box(
+                "[API ERROR] Rate Limit Exceeded",
+                messages=["Claude API rate limit reached.", str(e)],
+                suggestions=[
+                    "Wait a few moments and try again",
+                    "Use 'reset' to clear conversation history",
+                    "Reduce the size of your request",
+                ],
+            )
             raise
         except APIError as e:
-            self._debug_log(f"\n{'='*60}")
-            self._debug_log(f"[API ERROR] Claude API Error")
-            self._debug_log(f"{'='*60}")
-            self._debug_log(f"[ERROR] Failed to communicate with Claude API.")
-            self._debug_log(f"[ERROR] {str(e)}")
-            self._debug_log(f"\n[SUGGESTION] Please check:")
-            self._debug_log(f"  1. Your internet connection")
-            self._debug_log(f"  2. API key is valid (ANTHROPIC_API_KEY)")
-            self._debug_log(f"  3. Anthropic API status: https://status.anthropic.com")
-            self._debug_log(f"{'='*60}\n")
+            self._debug_box(
+                "[API ERROR] Claude API Error",
+                messages=["Failed to communicate with Claude API.", str(e)],
+                suggestions=[
+                    "Your internet connection",
+                    "API key is valid (ANTHROPIC_API_KEY)",
+                    "Anthropic API status: https://status.anthropic.com",
+                ],
+            )
             raise
         except Exception as e:
-            self._debug_log(f"\n{'='*60}")
-            self._debug_log(f"[ERROR] Unexpected Error")
-            self._debug_log(f"{'='*60}")
-            self._debug_log(f"[ERROR] {str(e)}")
-            self._debug_log(f"{'='*60}\n")
+            self._debug_box("[ERROR] Unexpected Error", messages=[str(e)])
             raise
 
     def _format_tool_result(self, result: ToolResult) -> str:

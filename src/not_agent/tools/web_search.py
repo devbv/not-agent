@@ -19,15 +19,12 @@ except ImportError:
 class WebSearchTool(BaseTool):
     """Tool for searching the web using Google search scraping."""
 
-    name = "WebSearch"
-    description = """Search the web using Google and return search results.
-Provides up-to-date information for current events and recent data.
-Returns search result information with titles, URLs, and snippets.
-
-Usage notes:
-- Use this tool for accessing information beyond the knowledge cutoff
-- Returns top 5-10 search results with titles, URLs, and descriptions
-- No API key required (uses web scraping)"""
+    name = "web_search"
+    description = (
+        "Search the web for up-to-date information. "
+        "Use when: user asks about current events, recent data, or anything beyond knowledge cutoff. "
+        "Returns top search results with titles, URLs, and snippets."
+    )
 
     @property
     def parameters(self) -> dict[str, Any]:

@@ -130,7 +130,7 @@ class TestTodoWriteTool:
         manager = TodoManager()
         tool = TodoWriteTool(manager)
 
-        assert tool.name == "TodoWrite"
+        assert tool.name == "todo_write"
         assert "Update the todo list" in tool.description
 
     def test_execute_success(self):
@@ -230,7 +230,7 @@ class TestTodoWriteTool:
 
         api_format = tool.to_anthropic_tool()
 
-        assert api_format["name"] == "TodoWrite"
+        assert api_format["name"] == "todo_write"
         assert "input_schema" in api_format
         assert api_format["input_schema"]["type"] == "object"
         assert "todos" in api_format["input_schema"]["properties"]
@@ -248,7 +248,7 @@ class TestTodoReadTool:
         manager = TodoManager()
         tool = TodoReadTool(manager)
 
-        assert tool.name == "TodoRead"
+        assert tool.name == "todo_read"
         assert "Read the current todo list" in tool.description
 
     def test_execute_empty_list(self):

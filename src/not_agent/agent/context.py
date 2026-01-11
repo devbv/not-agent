@@ -69,9 +69,7 @@ class ContextManager:
         오래된 메시지를 AI로 요약하고 새 세션으로 교체.
         """
         if debug_log:
-            debug_log("\n" + "=" * 60)
             debug_log("[CONTEXT COMPACTION] Starting...")
-            debug_log("=" * 60)
 
         messages = session.messages
         original_count = len(messages)
@@ -119,7 +117,6 @@ class ContextManager:
             debug_log(f"[SUCCESS] Compaction complete!")
             debug_log(f"[SUCCESS] Messages: {original_count} → {new_count}")
             debug_log(f"[SUCCESS] Tokens: {original_tokens:,} → {new_tokens:,} ({reduction:.1f}% reduction)")
-            debug_log("=" * 60 + "\n")
 
     def _find_safe_split_point(self, messages: list["Message"]) -> int:
         """tool_use/tool_result 쌍을 깨지 않는 분할 지점 찾기."""

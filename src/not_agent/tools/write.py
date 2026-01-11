@@ -14,8 +14,9 @@ class WriteTool(BaseTool):
 
     name = "write"
     description = (
-        "Write content to a file. "
-        "Creates the file if it doesn't exist, overwrites if it does."
+        "Write content to a file (creates or overwrites). "
+        "Use when: user asks to create a new file. "
+        "CRITICAL: Provide BOTH file_path AND complete content in a single call."
     )
 
     @property

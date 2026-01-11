@@ -13,8 +13,8 @@ class GlobTool(BaseTool):
 
     name = "glob"
     description = (
-        "Find files matching a glob pattern. "
-        "Supports patterns like '**/*.py', 'src/**/*.ts', etc."
+        "Find files by glob pattern ('**/*.py', 'src/**/*.ts'). "
+        "Use when: user asks to find/search for files by name or extension."
     )
 
     @property

@@ -56,7 +56,7 @@ class TodoWriteTool(BaseTool):
 
     @property
     def name(self) -> str:
-        return "TodoWrite"
+        return "todo_write"
 
     @property
     def description(self) -> str:
@@ -195,7 +195,7 @@ class TodoReadTool(BaseTool):
 
     @property
     def name(self) -> str:
-        return "TodoRead"
+        return "todo_read"
 
     @property
     def description(self) -> str:

@@ -71,43 +71,6 @@ class ToolExecutor:
         # === 실제 도구 실행 ===
         try:
             return tool.execute(**tool_input)
-        except TypeError as e:
-            # Better error message for missing parameters
-            error_msg = str(e)
-            if "missing" in error_msg and "required" in error_msg:
-                # Provide detailed guidance based on tool type
-                guidance = ""
-                if tool_name == "write":
-                    guidance = (
-                        "\n\nFor 'write' tool, you MUST provide:\n"
-                        "- file_path: The path to the file\n"
-                        "- content: The FULL content to write to the file\n\n"
-                        "Example:\n"
-                        "write(file_path='/path/to/file.md', content='Full content here...')\n\n"
-                        "CRITICAL ERROR: You called write without the 'content' parameter.\n"
-                        "This suggests you're trying to stream content, but that doesn't work with tools.\n\n"
-                        "What you MUST do instead:\n"
-                        "1. Compose the ENTIRE file content first (in your response text if needed)\n"
-                        "2. Then make ONE write tool call with BOTH file_path AND complete content\n"
-                        "3. The content parameter must contain the full text, not be empty or missing\n\n"
-                        "Try again with the complete content included in the tool call."
-                    )
-                elif tool_name == "edit":
-                    guidance = (
-                        "\n\nFor 'edit' tool, you MUST provide:\n"
-                        "- file_path: The path to the file\n"
-                        "- old_string: The exact text to replace\n"
-                        "- new_string: The replacement text"
-                    )
-
-                return ToolResult(
-                    success=False,
-                    output="",
-                    error=f"Tool '{tool_name}' called with missing parameters: {error_msg}\n"
-                    f"Provided parameters: {list(tool_input.keys())}\n"
-                    f"Please make sure to provide all required parameters.{guidance}",
-                )
-            raise
         except Exception as e:
             return ToolResult(
                 success=False,

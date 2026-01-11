@@ -13,8 +13,8 @@ class ReadTool(BaseTool):
 
     name = "read"
     description = (
-        "Read the contents of a file. "
-        "Returns the file content with line numbers."
+        "Read file contents with line numbers. "
+        "Use when: user asks to read/show/view a file, or you need to understand code before editing."
     )
 
     @property
