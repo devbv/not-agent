@@ -3,10 +3,12 @@
 import re
 from typing import Any, TYPE_CHECKING
 
+from .message import TextPart, ToolUsePart, ToolResultPart
+
 if TYPE_CHECKING:
     from not_agent.config import Config
     from not_agent.provider import BaseProvider
-    from .session import Session
+    from .session import Session, Message
 
 
 class ContextManager:
@@ -71,7 +73,7 @@ class ContextManager:
             debug_log("[CONTEXT COMPACTION] Starting...")
             debug_log("=" * 60)
 
-        messages = session.to_api_format()
+        messages = session.messages
         original_count = len(messages)
         original_tokens = self.estimate_tokens(session)
 
@@ -98,12 +100,12 @@ class ContextManager:
         if debug_log:
             debug_log(f"[INFO] Summary generated ({len(summary)} characters)")
 
-        # 새 메시지 리스트 구성
+        # 새 메시지 리스트 구성 (API 형식으로)
         summary_message = {
             "role": "user",
             "content": f"[Previous conversation summary]\n\n{summary}"
         }
-        new_messages = [summary_message] + recent_messages
+        new_messages = [summary_message] + [msg.to_api_format() for msg in recent_messages]
 
         # 세션 업데이트
         session.set_messages(new_messages)
@@ -119,21 +121,21 @@ class ContextManager:
             debug_log(f"[SUCCESS] Tokens: {original_tokens:,} → {new_tokens:,} ({reduction:.1f}% reduction)")
             debug_log("=" * 60 + "\n")
 
-    def _find_safe_split_point(self, messages: list[dict[str, Any]]) -> int:
+    def _find_safe_split_point(self, messages: list["Message"]) -> int:
         """tool_use/tool_result 쌍을 깨지 않는 분할 지점 찾기."""
         preserve_count = self.preserve_recent_messages
 
         if len(messages) <= preserve_count:
             return len(messages)
 
-        # 첫 번째 보존 메시지가 tool_result인지 확인
+        # 첫 번째 보존 메시지가 tool_result를 포함하는지 확인
         first_recent = messages[-preserve_count]
-        if first_recent.get("role") == "user":
-            content = first_recent.get("content", [])
-            if isinstance(content, list) and any(
-                isinstance(item, dict) and item.get("type") == "tool_result"
-                for item in content
-            ):
+        if first_recent.role == "user":
+            has_tool_result = any(
+                isinstance(part, ToolResultPart)
+                for part in first_recent.parts
+            )
+            if has_tool_result:
                 # tool_use가 있는 이전 메시지도 포함
                 preserve_count += 1
 
@@ -141,7 +143,7 @@ class ContextManager:
 
     def _generate_summary(
         self,
-        messages_to_summarize: list[dict[str, Any]],
+        messages_to_summarize: list["Message"],
         system_prompt: str,
     ) -> str:
         """AI를 사용하여 메시지 요약 생성."""
@@ -174,7 +176,7 @@ Focus on facts, not process. Include specific names (files, variables, etc.).
 Wrap your entire summary in <summary></summary> tags."""
 
         try:
-            # 메시지 정리 (tool content 제거, 텍스트만 유지)
+            # 메시지 정리 (tool content 단순화, 텍스트 유지)
             cleaned_messages = self._clean_messages_for_summary(messages_to_summarize)
 
             # AI 호출
@@ -204,37 +206,28 @@ Wrap your entire summary in <summary></summary> tags."""
 
     def _clean_messages_for_summary(
         self,
-        messages: list[dict[str, Any]],
+        messages: list["Message"],
     ) -> list[dict[str, Any]]:
         """요약용으로 메시지 정리 (tool 관련 콘텐츠 단순화)."""
         cleaned = []
 
         for msg in messages:
-            role = msg.get("role")
-            content = msg.get("content")
+            text_parts = []
 
-            if isinstance(content, str):
-                cleaned.append(msg)
-            elif isinstance(content, list):
-                text_parts = []
-                for item in content:
-                    if isinstance(item, dict):
-                        if item.get("type") == "text":
-                            text_parts.append(item.get("text", ""))
-                        elif item.get("type") == "tool_use":
-                            tool_name = item.get("name", "unknown")
-                            tool_input = str(item.get("input", {}))[:100]
-                            text_parts.append(f"[Used tool: {tool_name} with {tool_input}...]")
-                        elif item.get("type") == "tool_result":
-                            result = str(item.get("content", ""))[:200]
-                            text_parts.append(f"[Tool result: {result}...]")
-                    elif hasattr(item, "text"):
-                        text_parts.append(item.text)
+            for part in msg.parts:
+                if isinstance(part, TextPart):
+                    text_parts.append(part.text)
+                elif isinstance(part, ToolUsePart):
+                    tool_input_str = str(part.tool_input)[:100]
+                    text_parts.append(f"[Used tool: {part.tool_name} with {tool_input_str}...]")
+                elif isinstance(part, ToolResultPart):
+                    result_str = part.content[:200] if part.content else ""
+                    text_parts.append(f"[Tool result: {result_str}...]")
 
-                if text_parts:
-                    cleaned.append({
-                        "role": role,
-                        "content": "\n".join(text_parts)
-                    })
+            if text_parts:
+                cleaned.append({
+                    "role": msg.role,
+                    "content": "\n".join(text_parts)
+                })
 
         return cleaned
