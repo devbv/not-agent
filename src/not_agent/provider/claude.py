@@ -5,11 +5,14 @@ import sys
 from typing import Any, TYPE_CHECKING
 
 from anthropic import Anthropic
+from rich.console import Console
 
 from .base import BaseProvider, ProviderResponse
 
 if TYPE_CHECKING:
     from not_agent.config import Config
+
+_console = Console(stderr=True)
 
 
 class ClaudeProvider(BaseProvider):
@@ -24,10 +27,10 @@ class ClaudeProvider(BaseProvider):
         api_key = config.get("api_key") or os.environ.get("ANTHROPIC_API_KEY")
 
         if not api_key:
-            print(
-                "[Error] ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다.\n"
+            _console.print(
+                "[red][Error][/red] ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다.\n"
                 "다음 명령어로 설정하세요:\n"
-                "  export ANTHROPIC_API_KEY='your-api-key'"
+                "  [cyan]export ANTHROPIC_API_KEY='your-api-key'[/cyan]"
             )
             sys.exit(1)
 

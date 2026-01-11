@@ -9,12 +9,12 @@ not-agent/
 ├── CLAUDE.md           # 이 파일 (프로젝트 컨텍스트)
 ├── history/            # 개발 히스토리 및 의사결정 기록
 ├── src/not_agent/      # 소스 코드
-│   ├── config/         # [신규] 설정 시스템
-│   ├── provider/       # [신규] LLM 프로바이더 추상화
+│   ├── config/         # 설정 시스템
+│   ├── provider/       # LLM 프로바이더 추상화
 │   ├── agent/          # 에이전트 코어 로직
+│   ├── core/           # 이벤트 시스템, 메시지 타입
 │   ├── tools/          # 도구 구현 (레지스트리 기반)
-│   ├── cli/            # CLI 인터페이스
-│   └── llm/            # [deprecated] → provider/
+│   └── cli/            # CLI 인터페이스
 ├── tests/              # 테스트 코드
 └── docs/               # 문서
 ```
@@ -70,11 +70,12 @@ not-agent/
 
 ## 작업 시 참고사항
 - `history/` 폴더에 중요한 의사결정과 진행상황 기록
+- 중요: Phase 작업 완료 시 반드시 커밋할 것 (`/commit` 사용)
 - 중요: 각 Phase 작업 시작시 계획 문서를 history 폴더 아래에 기록
 - 중요: 각 Phase 완료 시 마일스톤 문서 작성
-- **중요: Phase 작업 완료 시 반드시 커밋할 것** (`/commit` 사용)
-- CLAUDE.md 파일과 README.md 파일 업데이트할 것
-- 코드 작성 전 설계 먼저 검토
+- CLAUDE.md 파일을 업데이트 할 것
+- README.md 파일을 업데이트 할 것
+- 코드 작성 전에 설계를 먼저 검토할 것
 
 ## 명령어
 ```bash
@@ -116,3 +117,4 @@ not-agent run "태스크 내용"
 - 2026-01-10: Phase 2 확장 (WebSearch, WebFetch 도구 추가)
 - 2026-01-10: Phase 3 완료 (컨텍스트 관리, AskUserQuestion 도구)
 - 2026-01-11: Phase 4.1 완료 (구조 리팩토링: Config, Provider, ToolRegistry, Session, ContextManager)
+- 2026-01-11: 레거시 코드 정리 (deprecated llm/ 모듈 제거, AgentLoop 레거시 파라미터 제거)

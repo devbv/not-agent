@@ -80,24 +80,17 @@ not-agent ask "What is the difference between lists and tuples?"
 not-agent/
 ├── src/
 │   └── not_agent/
+│       ├── config/         # Configuration system
+│       ├── provider/       # LLM provider abstraction
+│       │   └── claude.py   # Claude API provider
 │       ├── agent/          # Agent loop and orchestration
-│       │   └── loop.py     # Main agent loop with tool execution
-│       ├── tools/          # Tool implementations
-│       │   ├── read.py     # File reading
-│       │   ├── write.py    # File writing
-│       │   ├── edit.py     # File editing
-│       │   ├── glob_tool.py # File pattern matching
-│       │   ├── grep.py     # Content search
-│       │   ├── bash.py     # Shell execution
-│       │   ├── web_search.py  # Web search
-│       │   └── web_fetch.py   # URL fetching
-│       ├── llm/            # LLM integration
-│       │   └── claude.py   # Claude API wrapper
+│       │   ├── loop.py     # Main agent loop
+│       │   ├── session.py  # Message session management
+│       │   └── context.py  # Context management
+│       ├── core/           # Event system, message types
+│       ├── tools/          # Tool implementations (registry-based)
 │       └── cli/            # Command-line interface
-│           └── main.py     # CLI entry point
-├── .claude/                # Claude Code skills
-│   └── skills/
-│       └── commit/         # Automated commit workflow
+├── tests/                  # Test code
 └── history/                # Development history and decisions
 ```
 
@@ -141,15 +134,26 @@ black src
 
 ## Configuration
 
-The agent uses `claude-haiku-4-5-20251001` by default for cost efficiency. To change the model, modify `src/not_agent/agent/loop.py`:
+Configuration can be set via files or environment variables:
 
-```python
-def __init__(
-    self,
-    model: str = "claude-sonnet-4-5-20250929",  # Change here
-    max_turns: int = 20,
-) -> None:
+```json
+// ~/.not_agent/config.json (global)
+// .not_agent.json (project)
+{
+  "model": "claude-sonnet-4-20250514",
+  "max_tokens": 16384,
+  "max_turns": 20,
+  "debug": false
+}
 ```
+
+Environment variables (prefix `NOT_AGENT_`):
+```bash
+export NOT_AGENT_MODEL="claude-sonnet-4-20250514"
+export NOT_AGENT_DEBUG="true"
+```
+
+Priority: CLI options > Environment variables > Project config > Global config > Defaults
 
 ## Examples
 
@@ -199,8 +203,9 @@ MIT
 - [x] Phase 1: Basic infrastructure and LLM integration
 - [x] Phase 2: Core tools (Read, Write, Edit, Glob, Grep, Bash)
 - [x] Phase 2 Extension: Web tools (WebSearch, WebFetch)
-- [ ] Phase 3: Advanced agent loop features
-- [ ] Phase 4: Multi-agent collaboration
-- [ ] Phase 5: Plugin system
+- [x] Phase 3: Context management and AskUserQuestion tool
+- [x] Phase 4.1: Structure refactoring (Config, Provider, Session, ContextManager)
+- [ ] Phase 4.2: Code generation and testing
+- [ ] Phase 5: Multi-agent collaboration
 
 See [history/](history/) for detailed development progress.

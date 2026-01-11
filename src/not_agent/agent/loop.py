@@ -43,17 +43,8 @@ class AgentLoop:
         self,
         config: Config | None = None,
         event_bus: EventBus | None = None,
-        # Legacy parameters (하위 호환성)
-        model: str | None = None,
-        max_turns: int | None = None,
-        max_output_length: int | None = None,
-        max_context_tokens: int | None = None,
-        compaction_threshold: float | None = None,
-        preserve_recent_messages: int | None = None,
-        enable_auto_compaction: bool | None = None,
         executor: ToolExecutor | None = None,
         todo_manager: TodoManager | None = None,
-        debug: bool | None = None,
     ) -> None:
         # Config 설정 (없으면 기본값 생성)
         self.config = config or Config()
@@ -61,34 +52,16 @@ class AgentLoop:
         # Event bus (optional)
         self.event_bus = event_bus
 
-        # Legacy parameters로 Config 오버라이드
-        if model is not None:
-            self.config.set("model", model)
-        if max_turns is not None:
-            self.config.set("max_turns", max_turns)
-        if max_output_length is not None:
-            self.config.set("max_output_length", max_output_length)
-        if max_context_tokens is not None:
-            self.config.set("context_limit", max_context_tokens)
-        if compaction_threshold is not None:
-            self.config.set("compact_threshold", compaction_threshold)
-        if preserve_recent_messages is not None:
-            self.config.set("preserve_recent_messages", preserve_recent_messages)
-        if enable_auto_compaction is not None:
-            self.config.set("enable_auto_compaction", enable_auto_compaction)
-        if debug is not None:
-            self.config.set("debug", debug)
-
         # Provider 설정
         self.provider: BaseProvider = get_provider(
             self.config.get("provider", "claude"),
             self.config
         )
 
-        # 설정값 캐싱 (자주 사용됨)
-        self.max_turns = self.config.get("max_turns", 20)
-        self.max_output_length = self.config.get("max_output_length", 10_000)
-        self.debug = self.config.get("debug", False)
+        # 설정값 (Config에서 로드)
+        self.max_turns: int = self.config.get("max_turns", 20)
+        self.max_output_length: int = self.config.get("max_output_length", 10_000)
+        self.debug: bool = self.config.get("debug", False)
 
         # TodoManager 인스턴스 생성 (세션별 격리)
         self.todo_manager = todo_manager or TodoManager()
@@ -118,32 +91,6 @@ class AgentLoop:
         # 상태 관리
         self.context = LoopContext(max_turns=self.max_turns)
         self._state_change_callbacks: list[Callable[[LoopState, LoopState], None]] = []
-
-    # --- Legacy compatibility properties ---
-    @property
-    def messages(self) -> list[dict[str, Any]]:
-        """Legacy: 직접 messages 접근 지원."""
-        return self.session.to_api_format()
-
-    @messages.setter
-    def messages(self, value: list[dict[str, Any]]) -> None:
-        """Legacy: messages 직접 설정 지원."""
-        self.session.set_messages(value)
-
-    @property
-    def max_context_tokens(self) -> int:
-        """Legacy property."""
-        return self.config.get("context_limit", 100_000)
-
-    @property
-    def preserve_recent_messages(self) -> int:
-        """Legacy property."""
-        return self.config.get("preserve_recent_messages", 3)
-
-    @property
-    def enable_auto_compaction(self) -> bool:
-        """Legacy property."""
-        return self.config.get("enable_auto_compaction", True)
 
     # Debug formatting
     _SEP = "=" * 60
@@ -559,7 +506,8 @@ When unsure about requirements, use ask_user."""
     def _check_context_size(self) -> None:
         """Check and warn if context is getting large."""
         # Auto-compact if threshold reached
-        if self.enable_auto_compaction and self.context_manager.should_compact(self.session):
+        enable_auto_compaction = self.config.get("enable_auto_compaction", True)
+        if enable_auto_compaction and self.context_manager.should_compact(self.session):
             self.context_manager.compact(
                 session=self.session,
                 system_prompt=self.system_prompt,
@@ -585,20 +533,3 @@ When unsure about requirements, use ask_user."""
     def reset(self) -> None:
         """Reset the conversation history."""
         self.session.clear()
-
-    # --- Legacy methods for backward compatibility ---
-    def _count_messages_tokens(self) -> int:
-        """Legacy: 토큰 수 추정."""
-        return self.context_manager.estimate_tokens(self.session)
-
-    def _should_compact(self) -> bool:
-        """Legacy: 컴팩션 필요 여부."""
-        return self.context_manager.should_compact(self.session)
-
-    def _compact_context(self) -> None:
-        """Legacy: 컨텍스트 컴팩션."""
-        self.context_manager.compact(
-            session=self.session,
-            system_prompt=self.system_prompt,
-            debug_log=self._debug_log if self.debug else None,
-        )
