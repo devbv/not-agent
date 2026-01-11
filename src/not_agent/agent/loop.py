@@ -10,6 +10,20 @@ from rich.console import Console
 from not_agent.config import Config
 from not_agent.provider import get_provider, BaseProvider
 from not_agent.tools import ToolResult, TodoManager, get_all_tools
+from not_agent.core import (
+    Event,
+    EventBus,
+    LoopStartedEvent,
+    LoopCompletedEvent,
+    TurnStartedEvent,
+    TurnCompletedEvent,
+    StateChangedEvent,
+    LLMRequestEvent,
+    LLMResponseEvent,
+    ToolExecutionStartedEvent,
+    ToolExecutionCompletedEvent,
+    ContextCompactionEvent,
+)
 from .executor import ToolExecutor
 from .session import Session
 from .context import ContextManager
@@ -28,6 +42,7 @@ class AgentLoop:
     def __init__(
         self,
         config: Config | None = None,
+        event_bus: EventBus | None = None,
         # Legacy parameters (하위 호환성)
         model: str | None = None,
         max_turns: int | None = None,
@@ -42,6 +57,9 @@ class AgentLoop:
     ) -> None:
         # Config 설정 (없으면 기본값 생성)
         self.config = config or Config()
+
+        # Event bus (optional)
+        self.event_bus = event_bus
 
         # Legacy parameters로 Config 오버라이드
         if model is not None:
@@ -135,6 +153,11 @@ class AgentLoop:
         if self.debug:
             _debug_console.print(f"[dim]{message}[/dim]")
 
+    def _emit(self, event: Event) -> None:
+        """Emit an event to the event bus if available."""
+        if self.event_bus:
+            self.event_bus.publish(event)
+
     def _debug_box(
         self,
         title: str,
@@ -158,9 +181,13 @@ class AgentLoop:
         old_state = self.context.state
         self.context.record_state(new_state)
 
-        self._debug_log(f"[STATE] {old_state.name} -> {new_state.name}")
+        # 이벤트 발행
+        self._emit(StateChangedEvent(
+            old_state=old_state.name,
+            new_state=new_state.name,
+        ))
 
-        # 콜백 호출 (이벤트 시스템 연동 포인트)
+        # 콜백 호출 (레거시 호환성)
         for callback in self._state_change_callbacks:
             try:
                 callback(old_state, new_state)
@@ -258,16 +285,33 @@ When unsure about requirements, use ask_user."""
             self._set_state(LoopState.RECEIVING_INPUT)
             self.session.add_user_message(user_message)
 
-            self._debug_box(f"[AGENT LOOP] Starting with user message: {user_message[:100]}...")
+            # 루프 시작 이벤트
+            self._emit(LoopStartedEvent(
+                session_id=self.session.id,
+                user_message=user_message[:100],
+            ))
 
             for turn in range(self.max_turns):
                 self.context.current_turn = turn + 1
 
-                self._debug_box(f"[TURN {turn + 1}/{self.max_turns}]")
+                # 턴 시작 이벤트
+                self._emit(TurnStartedEvent(
+                    turn_number=turn + 1,
+                    max_turns=self.max_turns,
+                ))
 
                 # LLM 호출
                 self._set_state(LoopState.CALLING_LLM)
+
+                # LLM 요청 이벤트
+                self._emit(LLMRequestEvent(
+                    message_count=len(self.session.messages),
+                    has_tools=bool(self.executor.get_tool_definitions()),
+                ))
+
+                llm_start_time = time.time()
                 response = self._call_llm()
+                llm_duration_ms = (time.time() - llm_start_time) * 1000
                 self.context.total_llm_calls += 1
 
                 # 응답 분석
@@ -275,6 +319,16 @@ When unsure about requirements, use ask_user."""
                 tool_uses = [
                     block for block in response.content if isinstance(block, ToolUseBlock)
                 ]
+
+                # LLM 응답 이벤트
+                usage = getattr(response, 'usage', {}) or {}
+                self._emit(LLMResponseEvent(
+                    stop_reason=getattr(response, 'stop_reason', ''),
+                    has_tool_use=bool(tool_uses),
+                    input_tokens=usage.get('input_tokens', 0),
+                    output_tokens=usage.get('output_tokens', 0),
+                    duration_ms=llm_duration_ms,
+                ))
 
                 # 종료 조건 확인
                 termination = self._check_termination(response, tool_uses)
@@ -289,46 +343,52 @@ When unsure about requirements, use ask_user."""
                         if isinstance(block, TextBlock)
                     ]
                     text_response = "\n".join(text_content)
-                    self._debug_log(f"\n[COMPLETE] {termination.name}")
+
+                    # 루프 완료 이벤트
+                    duration_ms = (time.time() - self.context.start_time) * 1000
+                    self._emit(LoopCompletedEvent(
+                        session_id=self.session.id,
+                        termination_reason=termination.name,
+                        total_turns=self.context.current_turn,
+                        duration_ms=duration_ms,
+                    ))
                     return text_response
 
                 # 도구 실행
                 self._set_state(LoopState.EXECUTING_TOOLS)
                 self.session.add_assistant_message(list(response.content))
 
-                self._debug_log(f"\n[TOOL EXECUTION] Executing {len(tool_uses)} tool(s)...")
-
                 tool_results = []
 
-                for idx, tool_use in enumerate(tool_uses):
-                    self._debug_log(f"\n  Tool {idx + 1}: {tool_use.name}")
-
+                for tool_use in tool_uses:
                     tool_input = dict(tool_use.input)
 
-                    # Show input for debugging
-                    input_str = str(tool_input)
-                    if len(input_str) > 150:
-                        self._debug_log(f"    Input: {input_str[:150]}...")
-                    else:
-                        self._debug_log(f"    Input: {input_str}")
+                    # 도구 실행 시작 이벤트
+                    self._emit(ToolExecutionStartedEvent(
+                        tool_name=tool_use.name,
+                        tool_input=tool_input,
+                    ))
 
                     # Pause spinner for ask_user to allow clean user input
                     if tool_use.name == "ask_user" and self.pause_spinner_callback:
                         self.pause_spinner_callback()
 
+                    tool_start_time = time.time()
                     result = self.executor.execute(tool_use.name, tool_input)
+                    tool_duration_ms = (time.time() - tool_start_time) * 1000
                     self.context.total_tool_calls += 1
 
                     # Resume spinner after ask_user
                     if tool_use.name == "ask_user" and self.resume_spinner_callback:
                         self.resume_spinner_callback()
 
-                    self._debug_log(f"    Success: {result.success}")
-                    if result.success:
-                        output_preview = result.output[:200] if result.output else "(empty)"
-                        self._debug_log(f"    Output: {output_preview}...")
-                    else:
-                        self._debug_log(f"    Error: {result.error}")
+                    # 도구 실행 완료 이벤트
+                    self._emit(ToolExecutionCompletedEvent(
+                        tool_name=tool_use.name,
+                        success=result.success,
+                        duration_ms=tool_duration_ms,
+                        output_preview=result.output[:200] if result.output else "",
+                    ))
 
                     # Update spinner with new todo status (live display)
                     if tool_use.name == "todo_write" and result.success:
@@ -344,7 +404,12 @@ When unsure about requirements, use ask_user."""
                     )
 
                 self.session.add_tool_results(tool_results)
-                self._debug_log(f"\n[FEEDBACK] Tool results added to conversation")
+
+                # 턴 완료 이벤트
+                self._emit(TurnCompletedEvent(
+                    turn_number=turn + 1,
+                    tool_calls_count=len(tool_uses),
+                ))
 
                 # 컨텍스트 크기 확인
                 self._set_state(LoopState.CHECKING_CONTEXT)
@@ -354,7 +419,14 @@ When unsure about requirements, use ask_user."""
             self.context.termination_reason = TerminationReason.MAX_TURNS
             self._set_state(LoopState.COMPLETED)
 
-            self._debug_box(f"[MAX TURNS] Reached maximum turns ({self.max_turns})")
+            # 루프 완료 이벤트 (최대 턴)
+            duration_ms = (time.time() - self.context.start_time) * 1000
+            self._emit(LoopCompletedEvent(
+                session_id=self.session.id,
+                termination_reason=TerminationReason.MAX_TURNS.name,
+                total_turns=self.context.current_turn,
+                duration_ms=duration_ms,
+            ))
             return "Max turns reached. Please continue with a new message."
 
         except KeyboardInterrupt:
@@ -376,7 +448,7 @@ When unsure about requirements, use ask_user."""
         messages = self.session.to_api_format()
 
         # Show LLM request
-        self._debug_log(f"\n[LLM REQUEST]")
+        self._debug_log(f"\n. [LLM REQUEST]")
         for i, msg in enumerate(messages, 1):
             role = msg['role']
             content = msg['content']
@@ -414,11 +486,27 @@ When unsure about requirements, use ask_user."""
                 max_tokens=self.config.get("max_tokens", 16 * 1024),
             )
 
+            # Log LLM response
+            self._debug_log(f"\n. [LLM RESPONSE]")
+            for block in response.content:
+                block_type = getattr(block, 'type', None)
+                if block_type == 'text':
+                    text = getattr(block, 'text', '')
+                    preview = text[:300] + "..." if len(text) > 300 else text
+                    self._debug_log(f"  [TEXT] {preview}")
+                elif block_type == 'tool_use':
+                    name = getattr(block, 'name', '?')
+                    input_data = getattr(block, 'input', {})
+                    input_str = str(input_data)
+                    input_preview = input_str[:150] + "..." if len(input_str) > 150 else input_str
+                    self._debug_log(f"  [TOOL_USE] {name}: {input_preview}")
+
             # ProviderResponse -> anthropic Message 형식으로 변환 (기존 코드 호환)
             # response.content는 이미 리스트 형태
             return type('Message', (), {
                 'content': response.content,
                 'stop_reason': response.stop_reason,
+                'usage': response.usage,
             })()
 
         except RateLimitError as e:

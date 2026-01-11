@@ -26,6 +26,7 @@ from not_agent.agent import AgentLoop
 from not_agent.agent.approval import ApprovalManager
 from not_agent.agent.executor import ToolExecutor
 from not_agent.tools import TodoManager, get_all_tools
+from not_agent.core import EventBus, EventLogger
 
 
 console = Console()
@@ -293,6 +294,13 @@ def agent(ctx: click.Context, model: str | None, approval: bool, debug: bool) ->
     # Create TodoManager (세션별 인스턴스)
     todo_manager = TodoManager()
 
+    # Create event bus and logger (debug 모드에서만 로깅)
+    event_bus = EventBus()
+    event_logger: EventLogger | None = None
+    if debug:
+        event_logger = EventLogger(console=console, verbose=True)
+        event_logger.attach(event_bus)
+
     # Create approval manager if enabled
     approval_manager = ApprovalManager(enabled=approval) if approval else None
 
@@ -300,9 +308,10 @@ def agent(ctx: click.Context, model: str | None, approval: bool, debug: bool) ->
     tools = get_all_tools(todo_manager=todo_manager)
     executor = ToolExecutor(tools=tools, approval_manager=approval_manager)
 
-    # Create agent loop with config and executor
+    # Create agent loop with config, executor, and event bus
     agent_loop = AgentLoop(
         config=config,
+        event_bus=event_bus,
         executor=executor,
         todo_manager=todo_manager,
     )
